@@ -1192,3 +1192,79 @@ def test_native_policy_preserves_public_network_state():
     before, after = diagnostic["before"], diagnostic["after"]
     changed = sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
     assert before == after, f"Native policy changed public Network state: {changed}"
+
+
+def test_ordinary_down_ramp_has_an_attainable_eight_cost_lower_bound():
+    """“p_prev - p <= P*(ramp_limit_down*u + ramp_limit_shut_down*(u_prev-u))”
+
+    Initial and root commitment are on. Prior output10 and ordinary down limit2
+    force thermal output at least8, although free renewable power could supply
+    the entire10MW load. Thermal8 plus renewable2 attains the cost lower bound8.
+    """
+    case = {
+        "network": {
+            "buses": [{"name": "A", "v_nom": 10}],
+            "generators": [
+                {"name": "T", "bus": "A", "p_nom": 10, "committable": True,
+                 "p_min_pu": 0, "marginal_cost": 1, "ramp_limit_down": 0.2},
+                {"name": "R", "bus": "A", "p_nom": 10, "committable": False,
+                 "marginal_cost": 0},
+            ],
+            "loads": [{"name": "L", "bus": "A"}],
+        },
+        "tree": [{"id": "r", "parent": None, "stage": 0, "probability": 1,
+                  "load": {"L": 10}, "renewable_pu": {"R": 1}, "line_status": {}}],
+        "options": {"risk_weight": 0, "alpha": 0,
+                    "initial": {"T": {"status": 1, "p": 10, "hours": 3, "root_status": 1}},
+                    "terminal_soc": {}, "shed_cost": {"L": 100}, "throughput_cost": {}},
+    }
+    answer = run_candidate(case)
+    assert answer["status"] == "optimal"
+    out = answer["node_policy"]["r"]
+    assert 10 - out["p"]["T"] <= 2 + 2e-5, "ordinary down-ramp: previous10 minus current output must be<=2MW"
+    assert out["p"]["T"] == pytest.approx(8, abs=2e-5, rel=2e-6)
+    assert out["p"]["R"] == pytest.approx(2, abs=2e-5, rel=2e-6)
+    assert answer["root_objective"] == pytest.approx(8, abs=2e-5, rel=2e-6)
+    validate(case, answer, 8)
+    independent, _ = exhaustive_optimum(case)
+    assert independent == pytest.approx(8, abs=2e-5, rel=2e-6)
+
+
+def test_active_zero_capacity_bridge_still_couples_island_angles():
+    """“零容量在运线路的 w 为0，仍属于电气连通图。”
+
+    Zero-capacity activeAC joins gaugeA to C while BC carries oneMW from C to B.
+    Thus thetaC=thetaA=0 and thetaB=-0.01. DeletingAC incorrectly makes B a
+    separate gauge, producing thetaC=0.01 despite the activeAC zero-flow law.
+    G=1 has cost1 and attains the supply-price lower bound independently.
+    """
+    case = {
+        "network": {
+            "buses": [{"name": "A", "v_nom": 10}, {"name": "B", "v_nom": 10},
+                      {"name": "C", "v_nom": 10}],
+            "lines": [
+                {"name": "AC", "bus0": "A", "bus1": "C", "x": 1, "s_nom": 0},
+                {"name": "BC", "bus0": "B", "bus1": "C", "x": 1, "s_nom": 2},
+            ],
+            "generators": [{"name": "G", "bus": "C", "p_nom": 2,
+                            "committable": False, "marginal_cost": 1}],
+            "loads": [{"name": "L", "bus": "B"}],
+        },
+        "tree": [{"id": "r", "parent": None, "stage": 0, "probability": 1,
+                  "load": {"L": 1}, "renewable_pu": {"G": 1},
+                  "line_status": {"AC": True, "BC": True}}],
+        "options": {"risk_weight": 0, "alpha": 0, "initial": {},
+                    "terminal_soc": {}, "shed_cost": {"L": 10}, "throughput_cost": {}},
+    }
+    answer = run_candidate(case)
+    assert answer["status"] == "optimal"
+    out = answer["node_policy"]["r"]
+    assert out["flow"]["AC"] == pytest.approx(
+        100 * (out["theta"]["A"] - out["theta"]["C"]), abs=2e-5, rel=2e-6
+    ), "active zero-capacity AC must retain its DC angle equation"
+    assert out["theta"]["C"] == pytest.approx(0, abs=2e-5, rel=2e-6)
+    assert out["theta"]["B"] == pytest.approx(-0.01, abs=2e-5, rel=2e-6)
+    assert answer["root_objective"] == pytest.approx(1, abs=2e-5, rel=2e-6)
+    validate(case, answer, 1)
+    independent, _ = exhaustive_optimum(case)
+    assert independent == pytest.approx(1, abs=2e-5, rel=2e-6)
