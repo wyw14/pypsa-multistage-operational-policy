@@ -948,7 +948,7 @@ def test_public_rounding_budget_checks_every_actual_topology(bad_node):
 
 
 def test_old_unrepresentable_angle_is_explicitly_outside_numeric_v2():
-    """题面："普通JSON/binary64无法表示"；"范围或预算不符抛 `ValueError`"。
+    """题面："Line.x"；"[1e-12,1e6] 欧姆"；"范围或预算不符抛 `ValueError`"。
 
     The old minimal-subnormal reactance required a1MW angle below the smallest
     representable value. The new public interval and independent budget both
