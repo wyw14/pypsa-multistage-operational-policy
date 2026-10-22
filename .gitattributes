@@ -3,3 +3,12 @@
 *.whl binary
 *.deb binary
 *.gz binary
+
+tests/**/*.py text eol=lf
+tests/**/*.ps1 text eol=lf
+tests/**/*.cmd text eol=lf
+tests/**/*.bat text eol=lf
+solution/**/*.py text eol=lf
+solution/**/*.ps1 text eol=lf
+solution/**/*.cmd text eol=lf
+solution/**/*.bat text eol=lf

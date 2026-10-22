@@ -27,4 +27,4 @@ timeout_sec = 600
 difficulty = "hard"
 category = "F.2 能源系统"
 tags = ["stochastic-control", "mixed-integer-optimization", "power-systems"]
-expert_time_estimate = "8h"
+expert_time_estimate = "8 hours (author estimate)"
