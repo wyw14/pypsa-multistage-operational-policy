@@ -1,0 +1,1393 @@
+# SPDX-FileCopyrightText: PyPSA Contributors
+#
+# SPDX-License-Identifier: MIT
+
+"""Components module.
+
+Contains classes and properties relevant to all component types in PyPSA. Also imports
+logic from other modules:
+- components.types
+
+Contains classes and logic relevant to specific component types in PyPSA.
+Generic functionality is implemented in the abstract module.
+ponents module.
+Components module.
+
+Contains classes and logic relevant to specific component types in PyPSA.
+Generic functionality is implemented in the abstract module.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+import xarray
+from deprecation import deprecated
+from pyproj import CRS
+
+from pypsa.common import equals
+from pypsa.components.array import ComponentsArrayMixin
+from pypsa.components.descriptors import ComponentsDescriptorsMixin
+from pypsa.components.index import ComponentsIndexMixin
+from pypsa.components.transform import ComponentsTransformMixin
+from pypsa.constants import (
+    DEFAULT_EPSG,
+    DEFAULT_TIMESTAMP,
+    RE_PORTS,
+    piecewise_attrs,
+    piecewise_schema,
+)
+from pypsa.costs import annuity, periodized_cost
+from pypsa.definitions.structures import Dict
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Collection, Sequence
+    from typing import Literal
+
+    from pypsa import Network
+    from pypsa.definitions.components import ComponentType
+
+    PortsLike = Literal["all"] | str | int | Collection[str] | Collection[int]  # noqa: PYI051
+
+# TODO attachment todos
+# - crs
+# - snapshots, investment_periods
+
+
+@dataclass
+class ComponentsData:
+    """Dataclass for Components.
+
+    <!-- md:guide components.md -->
+
+    This class is used to store all data of a Components object. Other classes inherit
+    from this class to implement logic and methods, but do not store any data next
+    to the data in here.
+
+    All attributes can therefore also be accessed directly from
+    any [`Components`][pypsa.Components] object (which defines all
+    attributes and properties which are available for all component types) as well as
+    in specific type classes as [`Generators`][pypsa.components.Generators] (which
+    define logic and methods specific to the component type).
+
+    Attributes
+    ----------
+    ctype : ComponentType
+        Component type information containing all default values and attributes. #TODO
+    n : Network | None
+        Network to which the component might be attached.
+    static : pd.DataFrame
+        Static data of components as a pandas DataFrame. Columns are the attributes
+        and the index is the component name.
+    dynamic : dict
+        Dynamic (time-varying) data of components as a dict-like object of pandas
+        DataFrames. Keys of the dict are the attribute names and each value is a pandas
+        DataFrame with snapshots as index and the component names as columns.
+
+    """
+
+    ctype: ComponentType
+    n: Network | None
+    static: pd.DataFrame
+    """
+    Dataframe with static data for all components of this type.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Static data of the component.
+
+    Examples
+    --------
+    >>> c.static
+    """
+    dynamic: Dict
+    """
+    Dataframe with dynamic data for all components of this type.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Dynamic data of the component.
+
+    Examples
+    --------
+    >>> c.dynamic
+    """
+    piecewise: Dict
+    """
+    Piecewise linear breakpoint data for all components of this type.
+
+    Dict-like container keyed by y-axis attribute name (e.g. 'efficiency',
+    'marginal_cost', 'capital_cost'). Each value is a DataFrame with:
+
+    - index: breakpoint number (int, 0-based), ``index.name = "breakpoint"``
+    - columns: MultiIndex ``(name, attribute)`` where ``attribute`` holds both
+      the x-axis coordinate (e.g. ``p_pu``, ``p_nom``) and the y-axis attribute,
+      ``columns.names = ["name", "attribute"]``
+
+    Examples
+    --------
+    >>> c.piecewise.efficiency
+    """
+
+
+def _split_port(attr: str) -> tuple[str, str]:
+    """Split a trailing port number off an attribute name.
+
+    'efficiency2' -> ('efficiency', '2'), 'marginal_cost' -> ('marginal_cost', '').
+    """
+    base = attr.rstrip("0123456789")
+    return base, attr.removeprefix(base)
+
+
+class Components(
+    ComponentsData,
+    ComponentsDescriptorsMixin,
+    ComponentsTransformMixin,
+    ComponentsIndexMixin,
+    ComponentsArrayMixin,
+):
+    """Components base class.
+
+    <!-- md:badge-version v0.33.0 --> | <!-- md:guide components.md -->
+
+    Base class for container of energy system related assets, such as
+    generators or transmission lines. Use the specific subclasses for concrete or
+    a generic component type.
+    All data is stored in the dataclass [ComponentsData][pypsa.components.components.ComponentsData].
+    Components inherits from it, adds logic and methods, but does not store any data
+    itself.
+
+    """
+
+    def __init__(
+        self,
+        ctype: ComponentType,
+        n: Network | None = None,
+        names: str | int | Sequence[int | str] | None = None,
+        suffix: str = "",
+    ) -> None:
+        """Initialize Components object.
+
+        Parameters
+        ----------
+        ctype : ComponentType
+            Component type information.
+        n : Network, optional
+            Network object to attach to, by default None.
+        names : str, int, Sequence[int | str], optional
+            Names of components to attach to, by default None.
+        suffix : str, optional
+            Suffix to add to component names, by default "".
+
+        """
+        if names is not None:
+            msg = "Adding components during initialisation is not yet supported."
+            raise NotImplementedError(msg)
+        if n is not None:
+            msg = (
+                "Attaching components to Network during initialisation is not yet "
+                "supported."
+            )
+            raise NotImplementedError(msg)
+        static, dynamic, piecewise = self._get_data_containers(ctype)
+        ComponentsData.__init__(
+            self, ctype, n=None, static=static, dynamic=dynamic, piecewise=piecewise
+        )
+        ComponentsArrayMixin.__init__(self)
+
+    def __str__(self) -> str:
+        """Get string representation of component.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Examples
+        --------
+        >>> str(n.components.generators)
+        "'Generator' Components"
+
+        """
+        return f"'{self.ctype.name}' Components"
+
+    def __repr__(self) -> str:
+        """Get representation of component.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Examples
+        --------
+        >>> c = n.components.generators
+        >>> c
+        'Generator' Components
+        ----------------------
+        Attached to PyPSA Network 'AC-DC-Meshed'
+        Components: 6
+
+        """
+        num_components = len(self.static)
+        if not num_components:
+            return f"Empty {self}"
+        text = f"{self}\n" + "-" * len(str(self)) + "\n"
+
+        # Add attachment status
+        if self.attached:
+            text += f"Attached to {str(self.n)}\n"
+
+        text += f"Components: {len(self.static)}"
+
+        return text
+
+    def __getitem__(self, key: str) -> Any:
+        """Get attribute of component.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Parameters
+        ----------
+        key : str
+            Attribute name to get.
+
+        Returns
+        -------
+        Any
+            Attribute value of component.
+
+        """
+        return getattr(self, key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Set attribute of component.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Parameters
+        ----------
+        key : str
+            Attribute name to set.
+        value : Any
+            Attribute value to set.
+
+        Raises
+        ------
+        KeyError
+            If the attribute is not found in component.
+
+        """
+        if key in self.__dict__:
+            setattr(self, key, value)
+        else:
+            msg = f"'{key}' not found in Component"
+            raise KeyError(msg)
+
+    def __eq__(self, other: object) -> bool:
+        """Check if two Components are equal.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Does not check the attached Network, but only component specific data. Therefore
+        two components can be equal even if they are attached to different networks.
+
+        Parameters
+        ----------
+        other : Any
+            Other object to compare with.
+
+        Returns
+        -------
+        bool
+            True if components are equal, otherwise False.
+
+        See Also
+        --------
+        [pypsa.Components.equals][]
+
+        """
+        return self.equals(other)
+
+    def __len__(self) -> int:
+        """Get the number of components.
+
+        <!-- md:badge-version v1.0.0 -->
+
+        Returns
+        -------
+        int
+            Number of components.
+
+        Examples
+        --------
+        >>> len(n.components.generators)
+        6
+
+        Which is the same as:
+        >>> n.components.generators.static.shape[0]
+        6
+
+        """
+        return len(self.static)
+
+    def equals(self, other: Any, log_mode: str = "silent") -> bool:
+        """Check if two Components are equal.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Does not check the attached Network, but only component specific data. Therefore
+        two components can be equal even if they are attached to different networks.
+
+        Parameters
+        ----------
+        other : Any
+            The other network to compare with.
+        log_mode: str, default="silent"
+            Controls how differences are reported:
+            - 'silent': No logging, just returns True/False
+            - 'verbose': Prints differences but doesn't raise errors
+            - 'strict': Raises ValueError on first difference
+
+        Raises
+        ------
+        ValueError
+            If log_mode is 'strict' and components are not equal.
+
+        Returns
+        -------
+        bool
+            True if components are equal, otherwise False.
+
+        Examples
+        --------
+        >>> n1 = pypsa.Network()
+        >>> n2 = pypsa.Network()
+        >>> n1.add("Bus", "bus1")
+        >>> n2.add("Bus", "bus1")
+        >>> n1.buses.equals(n2.buses)
+        True
+
+        """
+        return (
+            equals(self.ctype, other.ctype, log_mode=log_mode, path="c.ctype")
+            and equals(self.static, other.static, log_mode=log_mode, path="c.static")
+            and equals(self.dynamic, other.dynamic, log_mode=log_mode, path="c.dynamic")
+            and equals(
+                self.piecewise, other.piecewise, log_mode=log_mode, path="c.piecewise"
+            )
+        )
+
+    @staticmethod
+    def _get_data_containers(ct: ComponentType) -> tuple[pd.DataFrame, Dict, Dict]:
+        static_dtypes = ct.defaults.loc[ct.defaults.static, "dtype"].drop(["name"])
+        if ct.name == "Shape":
+            crs = CRS.from_epsg(
+                DEFAULT_EPSG
+            )  # if n is None else n.crs #TODO attach mechanism
+            static = gpd.GeoDataFrame(
+                {k: gpd.GeoSeries(dtype=d) for k, d in static_dtypes.items()},
+                columns=static_dtypes.index,
+                crs=crs,
+            )
+        else:
+            static = pd.DataFrame(
+                {k: pd.Series(dtype=d) for k, d in static_dtypes.items()},
+                columns=static_dtypes.index,
+            )
+        static.index.name = "name"
+
+        # # it's currently hard to imagine non-float series,
+        # but this could be generalised
+        dynamic = Dict()
+        snapshots = pd.Index(
+            [DEFAULT_TIMESTAMP]
+        )  # if n is None else n.snapshots #TODO attach mechanism
+        for k in ct.defaults.index[ct.defaults.varying]:
+            df = pd.DataFrame(index=snapshots, columns=[], dtype=float)
+            df.index.name = "snapshot"
+            df.columns.name = "name"
+            dynamic[k] = df
+
+        # Piecewise breakpoint data: one empty DataFrame per piecewise attribute
+        # defined by the piecewise_x column in the component's attribute CSV.
+        piecewise = Dict()
+        for y_attr in piecewise_attrs(ct.name).y.unique():
+            cols = pd.MultiIndex.from_tuples([], names=["name", "attribute"])
+            df = pd.DataFrame(
+                index=pd.Index([], name="breakpoint", dtype=int),
+                columns=cols,
+                dtype=float,
+            )
+            piecewise[y_attr] = df
+
+        return static, dynamic, piecewise
+
+    @property
+    def _piecewise_attrs(self) -> pd.DataFrame:
+        """Piecewise attribute rows for this component type."""
+        return piecewise_attrs(self.name)
+
+    def has_piecewise(self, attr: str) -> bool:
+        """Whether this component instance has piecewise breakpoint data for `attr`."""
+        pw_df = self.piecewise.get(attr)
+        return pw_df is not None and not pw_df.empty
+
+    def _piecewise_schema(self, attr: str) -> pd.Series:
+        """Get the piecewise definition row for `attr`, ignoring any port suffix (empty if undefined)."""
+        row = piecewise_schema(self.name, attr)
+        base, port = _split_port(attr)
+        if row.empty and port:
+            # Only schema rows with a {port} placeholder accept suffixed attrs.
+            candidate = piecewise_schema(self.name, base)
+            if not candidate.empty and "{port}" in candidate.aux_variable:
+                row = candidate
+        return row
+
+    def _piecewise_aux_var(self, attr: str) -> str:
+        """Model-variable name of the piecewise auxiliary variable for `attr`."""
+        row = self._piecewise_schema(attr)
+        if row.empty:
+            msg = f"{self.name!r} has no piecewise schema for attribute {attr!r}."
+            raise ValueError(msg)
+        # An empty port suffix denotes port 1
+        port = _split_port(attr)[1] or "1"
+        return f"{self.name}-{row.aux_variable.format(port=port)}"
+
+    def _piecewise_x_var(self, attr: str) -> str:
+        """Model-variable name of the piecewise x variable for `attr`."""
+        row = self._piecewise_schema(attr)
+        if row.empty:
+            msg = f"{self.name!r} has no piecewise schema for attribute {attr!r}."
+            raise ValueError(msg)
+        return f"{self.name}-{row.x.replace('_pu', '')}"
+
+    @property
+    def standard_types(self) -> pd.DataFrame | None:
+        """Get standard types of component.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with standard types of component.
+
+        Examples
+        --------
+        >>> n.components.transformers.standard_types
+
+        """
+        return self.ctype.standard_types
+
+    @property
+    def name(self) -> str:
+        """Name of component type.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Returns
+        -------
+        str
+            Name of component.
+
+        Examples
+        --------
+        >>> n.components.generators.name
+        'Generator'
+
+        """
+        return self.ctype.name
+
+    @property
+    def list_name(self) -> str:
+        """List name of component type.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Returns
+        -------
+        str
+            List name of component.
+
+        Examples
+        --------
+        >>> n.components.generators.list_name
+        'generators'
+
+        """
+        return self.ctype.list_name
+
+    @property
+    def description(self) -> str:
+        """Description of component.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Returns
+        -------
+        str
+            Description of component.
+
+        Examples
+        --------
+        >>> n.components.generators.description
+        'Power generator for the bus carrier it attaches to.'
+
+        """
+        return self.ctype.description
+
+    @property
+    def category(self) -> str:
+        """Category of component.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Returns
+        -------
+        str
+            Category of component.
+
+        Examples
+        --------
+        >>> n.components.generators.category
+        'controllable_one_port'
+
+        """
+        return self.ctype.category
+
+    @property
+    def type(self) -> str:
+        """Get category of component.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        !!! note
+            While not actively deprecated yet, [`category`][pypsa.Components.category] is the preferred method
+            to access component type.
+
+        Returns
+        -------
+        str
+            Category of component.
+
+        """
+        return self.ctype.category
+
+    @property
+    @deprecated(
+        deprecated_in="1.0.0", removed_in="2.0.0", details="Use `c.defaults` instead."
+    )
+    def attrs(self) -> pd.DataFrame:
+        """Default values of corresponding component type.
+
+        !!! warning "Deprecated in <!-- md:badge-version v1.0.0 -->"
+
+            Use [`c.defaults`][pypsa.Components.defaults] instead.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with component attribute names as index and the information
+            like type, unit, default value and description as columns.
+
+        """
+        return self.ctype.defaults
+
+    @property
+    def defaults(self) -> pd.DataFrame:
+        """Default values of corresponding component type.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with component attribute names as index and the information
+            like type, unit, default value and description as columns.
+
+        Examples
+        --------
+        >>> n.components.generators.defaults.head() # doctest: +SKIP
+                     type unit default                                        description            status  static  varying              typ    dtype
+        attribute
+        name       string  NaN                                                Unique name  Input (required)    True    False    <class 'str'>   object
+        bus        string  NaN                 name of bus to which generator is attached  Input (required)    True    False    <class 'str'>   object
+        control    string  NaN      PQ  P,Q,V control strategy for PF, must be "PQ", "...  Input (optional)    True    False    <class 'str'>   object
+        type       string  NaN          Placeholder for generator type. Not yet implem...  Input (optional)    True    False    <class 'str'>   object
+        p_nom       float   MW     0.0          Nominal power for limits in optimization.  Input (optional)    True    False  <class 'float'>  float64
+
+        """
+        return self.ctype.defaults
+
+    @property
+    def empty(self) -> bool:
+        """Check if component is empty.
+
+        <!-- md:badge-version v1.0.0 -->
+
+        Returns
+        -------
+        bool
+            True if component is empty, otherwise False.
+
+        Examples
+        --------
+        >>> n = pypsa.Network()
+        >>> n.add('Generator', 'g1')
+        >>> n.components.generators.empty
+        False
+
+        >>> n.components.buses.empty
+        True
+
+        """
+        return self.static.empty
+
+    @property
+    def attached(self) -> bool:
+        """Check if component is attached to a Network.
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Some functionality of the component is only available when attached to a
+        Network.
+
+        Returns
+        -------
+        bool
+            True if component is attached to a Network, otherwise False.
+
+        Examples
+        --------
+        >>> n.components.generators.attached
+        True
+
+        """
+        return self.n is not None
+
+    @property
+    def n_save(self) -> Any:
+        """A save property to access the network (component must be attached).
+
+        <!-- md:badge-version v0.33.0 -->
+
+        Returns
+        -------
+        Network
+            Network to which the component is attached.
+
+        Raises
+        ------
+        AttributeError
+            If component is not attached to a Network.
+
+        """
+        if not self.attached:
+            msg = "Component must be attached to a Network."
+            raise AttributeError(msg)
+        return self.n
+
+    @property
+    @deprecated(
+        deprecated_in="1.0.0", removed_in="2.0.0", details="Use `c.static` instead."
+    )
+    def df(self) -> pd.DataFrame:
+        """Get static data of all components as pandas DataFrame.
+
+        !!! warning "Deprecated in <!-- md:badge-version v1.0.0 -->"
+            Use [`c.static`][pypsa.Components.static] instead.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with components as index and attributes as columns.
+
+        """
+        return self.static
+
+    @property
+    @deprecated(
+        deprecated_in="1.0.0", removed_in="2.0.0", details="Use `c.dynamic` instead."
+    )
+    def pnl(self) -> dict:
+        """Get dynamic data of all components as a dictionary of pandas DataFrames.
+
+        !!! warning "Deprecated in <!-- md:badge-version v1.0.0 -->"
+            Use [`c.dynamic`][pypsa.Components.dynamic] instead.
+
+        Returns
+        -------
+        dict
+            Dictionary of dynamic components. Keys are the attribute and each value is
+            a pandas DataFrame with snapshots as index and the component names as
+            columns.
+
+        """
+        return self.dynamic
+
+    @property
+    def ds(self) -> xarray.Dataset:
+        """Create a xarray data array view of the component.
+
+        <!-- md:badge-version v1.0.0 -->
+
+        !!! note
+
+            Note that this will create a full copy of the component data. For large networks
+            this may be a bottleneck. Use the [pypsa.Components.da][] accessor instead to
+            access a specific attribute of the component.
+
+        Returns
+        -------
+        xarray.Dataset
+            Dataset with component attributes as variables and snapshots as coordinates.
+
+        See Also
+        --------
+        [pypsa.Components.da][]
+
+        Examples
+        --------
+        >>> c = n.components.generators
+        >>> c.ds  # doctest: +ELLIPSIS
+        <xarray.Dataset> Size: 8kB
+        Dimensions:                     (name: 6, snapshot: 10)
+        Coordinates:
+          * name                        (name) object 48B 'Manchester Wind' ... 'Fran...
+          * snapshot                    (snapshot) datetime64[ns] 80B 2015-01-01 ... ...
+        Data variables: (12/48)
+            bus                         (name) object 48B 'Manchester' ... 'Frankfurt'
+            control                     (name) object 48B 'Slack' 'PQ' ... 'Slack' 'PQ'
+            type                        (name) object 48B '' '' '' '' '' ''
+            p_nom                       (name) float64 48B 80.0 5e+04 ... 110.0 8e+04
+            p_nom_mod                   (name) float64 48B 0.0 0.0 0.0 0.0 0.0 0.0
+            p_nom_extendable            (name) bool 6B True True True True True True
+            ...                          ...
+            ramp_limit_start_up         (name) float64 48B nan nan nan nan nan nan
+            ramp_limit_shut_down        (name) float64 48B nan nan nan nan nan nan
+            weight                      (name) float64 48B 1.0 1.0 1.0 1.0 1.0 1.0
+            p_nom_opt                   (name) float64 48B 4.091e+03 0.0 ... 982.0
+            capital_cost_piecewise_opt  (name) float64 48B 0.0 0.0 0.0 0.0 0.0 0.0
+            p                           (snapshot, name) float64 480B 742.0 ... 483.2
+
+        """
+        data = {}
+
+        for attr in self.static.columns:
+            data[attr] = self._as_xarray(attr)
+
+        for attr, df in self.dynamic.items():
+            if not df.empty:
+                data[attr] = self._as_xarray(attr)
+
+        return xarray.Dataset(data)
+
+    @property
+    def units(self) -> pd.Series:
+        """Get units of all attributes of components.
+
+        <!-- md:badge-version v0.34.0 -->
+
+        Returns
+        -------
+        pd.Series
+            Series with attribute names as index and units as values.
+
+        Examples
+        --------
+        >>> c = n.components.generators
+        >>> c.units.head() # doctest: +SKIP
+                        unit
+        attribute
+        p_nom            MW
+        p_nom_mod        MW
+        p_nom_min        MW
+        p_nom_max        MW
+        p_min_pu   per unit
+
+        """
+        return self.defaults.unit[self.defaults.unit.notnull()].to_frame()
+
+    @property
+    def ports(self) -> list:
+        """Get ports of all components.
+
+        <!-- md:badge-version v0.34.0 -->
+
+        Returns
+        -------
+        pd.Series
+            Series with attribute names as index and port names as values.
+
+        Examples
+        --------
+        >>> c = n.components.lines
+        >>> c.ports
+        ['0', '1']
+
+        """
+        return [
+            match.group(1) for col in self.static if (match := RE_PORTS.search(col))
+        ]
+
+    def _as_port(self, port: int | str) -> int:
+        """Convert a single port specification to an integer index.
+
+        Parameters
+        ----------
+        port : int | str
+            Port specification. Can be an integer index directly, or a string
+            like "bus0", "bus1", or just "0", "1". The string "bus" alone
+            maps to port 0.
+
+        Returns
+        -------
+        int
+            The port index.
+
+        Raises
+        ------
+        ValueError
+            If port cannot be converted to a valid port index.
+
+        """
+        try:
+            if isinstance(port, str):
+                port = port.removeprefix("bus")
+                if port == "":
+                    return 0
+            return int(port)
+        except ValueError:
+            msg = f"Ports should be given as int or 'busX' string, not: {port}"
+            raise ValueError(msg) from None
+
+    def _as_ports(self, ports: PortsLike) -> list[int]:
+        """Convert port-like input to a list of integer port indices.
+
+        Parameters
+        ----------
+        ports : PortsLike
+            Port specification. Can be:
+            - "all": returns all port indices
+            - str: port name like "bus0", "bus1", or just "0", "1"
+            - int: port index directly
+            - Sequence of str/int: multiple ports
+
+        Returns
+        -------
+        list of int
+            List of port indices.
+
+        Raises
+        ------
+        ValueError
+            If a port specification cannot be converted to a valid port index.
+
+        """
+        existing_ports = self.ports
+
+        if ports == "all":
+            return list(range(len(existing_ports)))
+        elif isinstance(ports, str | int):
+            return [self._as_port(ports)]
+
+        return [self._as_port(p) for p in ports]
+
+    @property
+    def unique_carriers(self) -> set[str]:
+        """Get all unique carrier values for this component.
+
+        <!-- md:badge-version v1.1.0 -->
+
+        Returns
+        -------
+        set of str
+            Set of all unique carrier names found in this component.
+
+        Examples
+        --------
+        >>> sorted(n.c.generators.unique_carriers)
+        ['gas', 'wind']
+
+        >>> sorted(n.c.buses.unique_carriers)
+        ['AC', 'DC']
+
+        See Also
+        --------
+        [pypsa.components.Carriers.add_missing_carriers][]
+
+        """
+        if self.static.empty or "carrier" not in self.static.columns:
+            return set()
+
+        # Get carriers and filter out empty strings and NaN
+        c_carriers = self.static["carrier"].dropna()
+        c_carriers = c_carriers[c_carriers != ""]
+        return set(c_carriers.unique())
+
+    @property
+    def extendables(self) -> pd.Index:
+        """Get the index of extendable elements of this component.
+
+        <!-- md:badge-version v1.0.0 -->
+
+        Returns
+        -------
+        pd.Index
+            Single-level index of extendable elements.
+
+        """
+        extendable_col = self._operational_attrs["nom_extendable"]
+        if extendable_col not in self.static.columns:
+            return self.static.iloc[:0].index
+
+        idx = self.static.loc[self.static[extendable_col]].index
+
+        # Remove scenario dimension, since they cannot vary across scenarios
+        if self.has_scenarios:
+            idx = idx.get_level_values("name").drop_duplicates()
+
+        return idx
+
+    @property
+    def fixed(self) -> pd.Index:
+        """Get the index of non-extendable elements of this component.
+
+        <!-- md:badge-version v1.0.0 -->
+
+        Returns
+        -------
+        pd.Index
+            Single-level index of non-extendable elements.
+
+        """
+        extendable_col = self._operational_attrs["nom_extendable"]
+        if extendable_col not in self.static.columns:
+            return self.static.iloc[:0].index
+
+        idx = self.static.loc[~self.static[extendable_col]].index
+
+        # Remove scenario dimension, since they cannot vary across scenarios
+        if self.has_scenarios:
+            idx = idx.get_level_values("name").drop_duplicates()
+
+        return idx
+
+    @property
+    def committables(self) -> pd.Index:
+        """Get the index of committable elements of this component.
+
+        <!-- md:badge-version v1.0.0 -->
+
+        Returns
+        -------
+        pd.Index
+            Single-level index of committable elements.
+
+        """
+        if "committable" not in self.static:
+            return self.static.iloc[:0].index
+
+        idx = self.static.loc[self.static["committable"]].index
+
+        # Remove scenario dimension, since they cannot vary across scenarios
+        if self.has_scenarios:
+            idx = idx.get_level_values("name").drop_duplicates()
+
+        return idx
+
+    @property
+    def maintainables(self) -> pd.Index:
+        """Get the index of maintainable elements of this component.
+
+        Returns
+        -------
+        pd.Index
+            Single-level index of maintainable elements.
+
+        """
+        if "maintainable" not in self.static:
+            return self.static.iloc[:0].index
+
+        idx = self.static.loc[self.static["maintainable"]].index
+
+        if self.has_scenarios:
+            idx = idx.get_level_values("name").drop_duplicates()
+
+        return idx
+
+    @property
+    def modulars(self) -> pd.Index:
+        """Get the index of modular elements of this component.
+
+        Modular components have a positive module size (e.g., p_nom_mod > 0)
+        which introduces integer variables for capacity expansion.
+
+        <!-- md:badge-version v1.1.0 -->
+
+        Returns
+        -------
+        pd.Index
+            Single-level index of modular elements.
+
+        """
+        mod_col = self._operational_attrs["nom_mod"]
+        if mod_col not in self.static.columns:
+            return self.static.iloc[:0].index
+
+        idx = self.static.loc[self.static[mod_col] > 0].index
+
+        # Remove scenario dimension, since they cannot vary across scenarios
+        if self.has_scenarios:
+            idx = idx.get_level_values("name").drop_duplicates()
+
+        return idx
+
+    def _infer_committable_big_m_scale(self) -> float:
+        """Infer a reasonable big-M scale from network and component data."""
+        candidates: list[float] = []
+
+        if "nom" not in self._operational_attrs:
+            msg = f"Component {self.name} has no nominal operational attribute."
+            raise AttributeError(msg)
+
+        if self.n is not None:
+            # Peak total load over time provides a natural system-scale bound.
+            load = self.n.get_switchable_as_dense("Load", "p_set")
+            peak_load = load.sum(axis=1).abs().max()
+            candidates.append(float(peak_load))
+
+        nom_attr = self._operational_attrs["nom"]
+        nom_series = self.static[nom_attr]
+        finite_nominal = nom_series[np.isfinite(nom_series) & (nom_series > 0)]
+        if not finite_nominal.empty:
+            candidates.append(float(finite_nominal.max()))
+
+        nom_max_attr = f"{nom_attr}_max"
+        nom_max_series = self.static[nom_max_attr]
+        finite_max = nom_max_series[np.isfinite(nom_max_series) & (nom_max_series > 0)]
+        if not finite_max.empty:
+            candidates.append(float(finite_max.max()))
+
+        if not candidates:
+            return 1e6
+
+        fallback = max(candidates) * 10
+        if not np.isfinite(fallback) or fallback <= 0:
+            return 1e6
+        return fallback
+
+    def get_committable_big_m_values(
+        self,
+        names: pd.Index,
+        max_pu: xarray.DataArray | None = None,
+        committable_big_m: float | None = None,
+    ) -> xarray.DataArray:
+        """Get per-asset big-M values for committable+extendable constraints."""
+        if "nom" not in self._operational_attrs:
+            msg = f"Component {self.name} has no nominal operational attribute."
+            raise AttributeError(msg)
+
+        nom_attr = self._operational_attrs["nom"]
+        nom_max_attr = f"{nom_attr}_max"
+
+        nom_max_values = self.da[nom_max_attr].sel(name=names)
+        if max_pu is None:
+            _, max_pu = self.get_bounds_pu(attr=self._operational_attrs["base"])
+        max_pu_values = max_pu.sel(name=names)
+        if "snapshot" in max_pu_values.dims:
+            max_pu_values = max_pu_values.max("snapshot")
+
+        big_m_default = committable_big_m
+        if big_m_default is None and self.n is not None:
+            big_m_default = self.n._committable_big_m
+        if big_m_default is None:
+            big_m_default = self._infer_committable_big_m_scale()
+        else:
+            if not np.isfinite(big_m_default):
+                msg = f"committable_big_m must be finite, got {big_m_default}."
+                raise ValueError(msg)
+            if big_m_default <= 0:
+                msg = f"committable_big_m must be positive, got {big_m_default}."
+                raise ValueError(msg)
+
+        fallback_values = big_m_default * max_pu_values.fillna(1)
+        return xarray.where(
+            np.isfinite(nom_max_values) & (nom_max_values > 0),
+            nom_max_values * max_pu_values,
+            fallback_values,
+        )
+
+    @property
+    def periodized_cost(self) -> xarray.DataArray:
+        """Calculate periodized cost from component attributes as xarray DataArray.
+
+        <!-- md:badge-version v1.1.0 -->
+
+        See Also
+        --------
+        `pypsa.costs.periodized_cost`
+
+        """
+        static = self.static
+        cost = periodized_cost(
+            capital_cost=static["capital_cost"],
+            overnight_cost=static["overnight_cost"],
+            discount_rate=static["discount_rate"],
+            lifetime=static["lifetime"],
+            fom_cost=static.get("fom_cost", 0),
+            nyears=self.nyears,
+        )
+        da = xarray.DataArray(cost)
+        if self.has_scenarios:
+            da = da.unstack().reindex(name=self.names, scenario=self.scenarios)
+        return da
+
+    @property
+    def capital_cost(self) -> pd.Series:
+        """Calculate annuitized investment cost per unit of capacity (no fom).
+
+        <!-- md:badge-version v1.1.0 -->
+
+        See Also
+        --------
+        `pypsa.costs.periodized_cost`
+
+        """
+        static = self.static
+        return periodized_cost(
+            capital_cost=static["capital_cost"],
+            overnight_cost=static["overnight_cost"],
+            discount_rate=static["discount_rate"],
+            lifetime=static["lifetime"],
+            fom_cost=None,
+            nyears=self.nyears,
+        )
+
+    @property
+    def nyears(self) -> float | pd.Series:
+        """Return the modeled time horizon in years.
+
+        <!-- md:badge-version v1.1.0 -->
+
+        See Also
+        --------
+        `pypsa.Network.nyears`
+
+        """
+        return self.n_save.nyears
+
+    @property
+    def annuity(self) -> pd.Series:
+        """Calculate annuity factor for all components.
+
+        <!-- md:badge-version v1.1.0 -->
+
+        Returns the annuity factor based on `discount_rate` and `lifetime`.
+        If `discount_rate` is NaN (no `overnight_cost` provided), returns 1.0.
+
+        Returns
+        -------
+        pd.Series
+            Annuity factor for each component.
+
+        Examples
+        --------
+        >>> n.c.generators.annuity  # doctest: +SKIP
+        name
+        gen1    0.085...
+        gen2    1.0
+        dtype: float64
+
+        See Also
+        --------
+        `pypsa.costs.annuity_factor`
+
+        """
+        static = self.static
+        discount_rate = static["discount_rate"]
+        lifetime = static["lifetime"]
+        return annuity(discount_rate, lifetime)
+
+    @property
+    def overnight_cost(self) -> pd.Series:
+        """Calculate overnight cost from component attributes.
+
+        <!-- md:badge-version v1.1.0 -->
+
+        If overnight_cost column is provided (not NaN), returns it directly.
+        Otherwise, converts annualized capital_cost back to overnight cost using
+        the formula: overnight_cost = capital_cost / (annuity_factor × nyears).
+
+        Note: When nyears == 1, capital_cost represents the annualized cost per year,
+        so overnight_cost = capital_cost / annuity_factor.
+
+        Returns
+        -------
+        pd.Series
+            Overnight (upfront) investment cost per unit of capacity.
+
+        Examples
+        --------
+        >>> n.c.generators.overnight_cost  # doctest: +SKIP
+        name
+        gen1    1000.0   # overnight_cost used directly
+        gen2    1166.0   # 100 / annuity(0.07, 25) - back-calculated from capital_cost
+        dtype: float64
+
+        See Also
+        --------
+        `capital_cost` : Annuitized investment cost for the modeled horizon.
+        `annuity` : Annuity factor for each component.
+
+        """
+        static = self.static
+        overnight = static["overnight_cost"]
+        capital = static["capital_cost"]
+        has_overnight = overnight.notna()
+
+        needs_back_calc = ~has_overnight & (capital != 0)
+        discount_rate = static["discount_rate"]
+        lifetime = static["lifetime"]
+        missing_params = needs_back_calc & (discount_rate.isna() | lifetime.isna())
+
+        if missing_params.any():
+            bad = static.index[missing_params].tolist()
+            msg = (
+                f"Cannot back-calculate overnight_cost for {bad}: "
+                "both 'discount_rate' and 'lifetime' must be provided "
+                "when 'overnight_cost' is not set."
+            )
+            raise ValueError(msg)
+
+        ann_factor = self.annuity
+        nyears = self.nyears
+        nyears_scalar = nyears.mean() if isinstance(nyears, pd.Series) else nyears
+        back_calculated = capital / (ann_factor * nyears_scalar)
+
+        return overnight.where(has_overnight, back_calculated)
+
+
+class SubNetworkComponents:
+    """Wrapper class to allow for custom attribute handling of components.
+
+    SubNetworkComponents are read-only and delegate attribute access to it's wrapped
+    Components object of the PyPSA Network. This allows for custom attribute handling
+    and getter functions to be implemented, e.g. to filter sub-network specific
+    components from the main network components.
+
+    Also See
+    --------
+    pypsa.Components : Base class for all PyPSA components in the
+    network.
+    """
+
+    def __init__(self, wrapped_data: Components, wrapped_get: Callable) -> None:
+        """Initialize SubNetworkComponents.
+
+        Parameters
+        ----------
+        wrapped_data : Components
+            Components object to wrap around.
+        wrapped_get : Callable
+            Custom getter function to delegate attribute access to the wrapped data
+            object and allow for custom attribute handling.
+
+        """
+        self._wrapped_data = wrapped_data
+        self._wrapper_func = wrapped_get
+
+    def __getattr__(self, item: str) -> Any:
+        """Delegate attribute access to the wrapped data object.
+
+        Parameters
+        ----------
+        item : str
+            Attribute name to access.
+
+        Returns
+        -------
+        Any
+            Attribute value of the wrapped data object.
+
+        """
+        return self._wrapper_func(item, self._wrapped_data)
+
+    def __setattr__(self, key: str, value: Any) -> None:
+        """Prevent setting of attributes.
+
+        Parameters
+        ----------
+        key : str
+            Attribute name to set.
+        value : Any
+            Attribute value to set.
+
+        Raises
+        ------
+        AttributeError
+            If attribute setting is attempted.
+
+        """
+        if key in {"_wrapped_data", "_wrapper_func"}:
+            super().__setattr__(key, value)
+        else:
+            msg = "SubNetworkComponents is read-only"
+            raise AttributeError(msg)
+
+    def __delattr__(self, name: str) -> None:
+        """Prevent deletion of attributes.
+
+        Parameters
+        ----------
+        name : str
+            Attribute name to delete.
+
+        Raises
+        ------
+        AttributeError
+            If attribute deletion is attempted.
+
+        """
+        msg = "SubNetworkComponents is read-only"
+        raise AttributeError(msg)
+
+    def __str__(self) -> str:
+        """Get string representation of sub-network components.
+
+        Examples
+        --------
+        >>> str(sub_network.components.generators)
+        "'Generator' SubNetworkComponents"
+
+        """
+        return f"'{self.ctype.name}' SubNetworkComponents"
+
+    def __repr__(self) -> str:
+        """Get representation of sub-network components.
+
+        Examples
+        --------
+        >>> sub_network.components.generators
+        'Generator' SubNetworkComponents
+        --------------------------------
+        Attached to Sub-Network of PyPSA Network 'AC-DC-Meshed'
+        Components: 6
+
+        """
+        num_components = len(self._wrapped_data.static)
+        if not num_components:
+            return f"Empty {self}"
+        text = f"{self}\n" + "-" * len(str(self)) + "\n"
+
+        # Add attachment status
+        if self.attached:
+            text += f"Attached to Sub-Network of {str(self.n)}\n"
+
+        text += f"Components: {len(self._wrapped_data.static)}"
+
+        return text

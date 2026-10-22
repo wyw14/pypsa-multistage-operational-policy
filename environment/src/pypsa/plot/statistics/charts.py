@@ -1,0 +1,933 @@
+# SPDX-FileCopyrightText: PyPSA Contributors
+#
+# SPDX-License-Identifier: MIT
+
+"""Chart plots based on statistics functions (like bar, line, area)."""
+
+from __future__ import annotations
+
+import inspect
+from abc import ABC
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import seaborn as sns
+
+from pypsa.plot.statistics.base import UNSET, PlotsGenerator, sanitize_mathtext
+
+DISTRIBUTION_TYPES = ["box", "violin", "histogram"]
+CHART_TYPES = ["area", "bar", "scatter", "line", *DISTRIBUTION_TYPES]
+
+# Statistics that expose `groupby_time` but have no per-snapshot resolution
+# (e.g. system_cost mixes static capex with dynamic opex). Not derivable from the
+# signature, so distribution plots must not request the full time series for them.
+TIME_AGGREGATED_STATS = frozenset({"system_cost"})
+
+# Per-row height scaling for categorical axes: inches (static) / pixels (interactive).
+ROW_HEIGHT_IN = 0.3
+BASE_HEIGHT_IN = 1
+MAX_HEIGHT_IN = 30
+ROW_HEIGHT_PX = 20
+BASE_HEIGHT_PX = 100
+MAX_HEIGHT_PX = 2000
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+
+
+SEABORN_PLOT_FUNCS = {
+    "scatter": sns.scatterplot,
+    "line": sns.lineplot,
+    "box": sns.boxplot,
+    "violin": sns.violinplot,
+    "histogram": sns.histplot,
+}
+
+
+def _stats_function_params(network: Any, method_name: str) -> set[str]:
+    """Return the parameter names of a statistics function's signature."""
+    wrapper = getattr(type(network.statistics), method_name)
+    return set(inspect.signature(wrapper.func).parameters) - {"self"}
+
+
+def _get_periods(network: Any) -> pd.Index | None:
+    """Return investment periods for a network if multi-invest is enabled."""
+    try:
+        periods = network.periods
+    except (AttributeError, NotImplementedError):
+        # NetworkCollection and some other types don't support periods
+        return None
+
+    if periods is None or periods.empty:
+        return None
+
+    if len(periods) <= 1:
+        return None
+
+    return periods
+
+
+def adjust_collection_bar_defaults(
+    network: Any,
+    chart_type: str,
+    color: str | None,
+    stacked: bool,
+    order: Sequence[Any] | None,
+) -> tuple[str | None, bool, Sequence[Any] | None]:
+    """Return adjusted defaults for bar charts on collections and multi-period data."""
+    if chart_type != "bar":
+        return color, stacked, order
+
+    index_names = network._index_names
+
+    # Check if network has stochastic scenarios
+    has_scenarios = network.has_scenarios
+
+    # When scenarios exist, DON'T use collection indices for color
+    # (they'll be used for faceting instead), so seaborn can aggregate scenarios
+    if has_scenarios:
+        # Don't set color - leave it as default (usually 'carrier')
+        # This ensures custom_case = False and seaborn aggregates scenarios
+        pass
+    # No scenarios: use original logic for collection grouping
+    # Handle 2-level multiindex: use second level for grouped bars
+    elif len(index_names) >= 2:
+        second_index_name = index_names[1]
+        if color is UNSET:
+            color = second_index_name
+        if stacked and color == second_index_name:
+            stacked = False
+        if order is None:
+            index_values = getattr(network, "index", None)
+            if index_values is not None and isinstance(index_values, pd.MultiIndex):
+                # Get unique values from second level
+                order = list(index_values.get_level_values(1).unique())
+    # Handle single-level index
+    elif len(index_names) == 1:
+        index_name = index_names[0]
+        if color is UNSET:
+            color = index_name
+        if stacked and color == index_name:
+            stacked = False
+        if order is None:
+            index_values = getattr(network, "index", None)
+            if index_values is not None:
+                order = list(index_values)
+
+    periods = _get_periods(network)
+    if periods is not None:
+        period_name = periods.name or "period"
+        if color is UNSET:
+            color = period_name
+        if stacked and color == period_name:
+            stacked = False
+        if order is None and color == period_name:
+            order = list(periods)
+
+    return color, stacked, order
+
+
+def prepare_bar_data(
+    network: Any, chart_type: str, data: pd.Series | pd.DataFrame
+) -> pd.Series | pd.DataFrame:
+    """Return data with investment-period columns stacked for bar charts."""
+    if chart_type != "bar":
+        return data
+
+    periods = _get_periods(network)
+    if periods is None:
+        return data
+
+    if isinstance(data, pd.Series):
+        period_name = periods.name or "period"
+        index_names = list(data.index.names) if data.index.names else []
+        if period_name in index_names:
+            return data
+        return data
+
+    # DataFrame case
+    columns = data.columns
+    period_name = periods.name or "period"
+
+    filled = data.fillna(0)
+
+    if isinstance(columns, pd.MultiIndex):
+        if period_name not in columns.names:
+            return data
+        stacked = filled.stack(level=period_name, future_stack=True)
+    elif (
+        columns.name == period_name
+        or columns.equals(periods)
+        or columns.astype(str).equals(periods.astype(str))
+    ):
+        stacked = filled.stack(future_stack=True)
+    else:
+        return data
+
+    if period_name in getattr(stacked.index, "names", []):
+        stacked = stacked.rename(str, level=period_name)
+
+    stacked.attrs = data.attrs
+    return stacked
+
+
+def aggregate_scenarios_for_plotly(
+    ldata: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Aggregate scenario data and calculate error bars for plotly.
+
+    Parameters
+    ----------
+    ldata : pd.DataFrame
+        Long format data with 'scenario' column
+
+    Returns
+    -------
+    tuple[pd.DataFrame, pd.DataFrame]
+        Aggregated data (with mean values) and full aggregated data (with std)
+
+    """
+    if "scenario" not in ldata.columns:
+        return ldata, ldata
+
+    # Group by all columns except 'scenario' and 'value'
+    groupby_cols = [col for col in ldata.columns if col not in ["scenario", "value"]]
+
+    # Calculate mean and std across scenarios
+    aggregated = ldata.groupby(groupby_cols, as_index=False).agg(
+        {"value": ["mean", "std"]}
+    )
+
+    # Flatten column names
+    aggregated.columns = groupby_cols + ["value", "value_std"]
+
+    # Fill NaN std with 0 (for cases with only one scenario)
+    aggregated["value_std"] = aggregated["value_std"].fillna(0)
+
+    # Keep the full aggregated data for error bar lookup
+    aggregated_with_std = aggregated.copy()
+
+    # Drop the std column from the main dataframe for plotting
+    aggregated = aggregated.drop(columns=["value_std"])
+
+    return aggregated, aggregated_with_std
+
+
+def facet_iter(
+    g: sns.FacetGrid,
+    df: pd.DataFrame,
+    facet_row: str | None,
+    facet_col: str | None,
+    split_by_sign: bool = False,
+) -> Iterator[tuple[Axes, pd.DataFrame]]:
+    """Generate (axis, filtered_data) for each facet in a FacetGrid.
+
+    Parameters
+    ----------
+    g : seaborn.FacetGrid
+        The FacetGrid instance to use
+    df : pandas.DataFrame
+        The DataFrame to filter for each facet
+    facet_row : str, optional
+        Column name used for creating row facets
+    facet_col : str, optional
+        Column name used for creating column facets
+    split_by_sign : bool, optional
+        Whether to split the data by sign (positive/negative) for the y-axis
+        Default is False.
+
+    Yields
+    ------
+    tuple : (axis, filtered_data)
+        - axis: The matplotlib Axes object for the current facet
+        - filtered_data: DataFrame filtered for the current facet
+
+    """
+    # Get the facet values
+    row_vals = g.row_names if g.row_names else [None]
+    col_vals = g.col_names if g.col_names else [None]
+
+    for i, row_val in enumerate(row_vals):
+        for j, col_val in enumerate(col_vals):
+            # col_wrap flattens the axes grid to 1-D (column-major facet order)
+            if g.axes.ndim == 1:
+                ax = g.axes[j if len(col_vals) > 1 else i]
+            else:
+                ax = g.axes[i, j]
+
+            # Filter the data for this specific facet
+            facet_data = df.copy()
+            if facet_row is not None and row_val is not None:
+                mask = facet_data[facet_row] == row_val
+                facet_data = facet_data[mask]
+            if facet_col is not None and col_val is not None:
+                mask = facet_data[facet_col] == col_val
+                facet_data = facet_data[mask]
+
+            # Skip if no data
+            if not facet_data.values.size:
+                continue
+
+            if split_by_sign:
+                for clip in [{"lower": 0}, {"upper": 0}]:
+                    yield ax, facet_data.assign(value=facet_data["value"].clip(**clip))
+            else:
+                # Yield the axis and the filtered data
+                yield ax, facet_data
+
+
+def map_dataframe_pandas_plot(
+    g: sns.FacetGrid,
+    df: pd.DataFrame,
+    x: str,
+    y: str,
+    color: str | None,
+    facet_row: str | None,
+    facet_col: str | None,
+    stacked: bool,
+    palette: dict | None = None,
+    kind: str = "area",
+    ylim: tuple[float, float] | None = None,
+    **kwargs: Any,
+) -> sns.FacetGrid:
+    """Handle the creation of area or bar plots for FacetGrid.
+
+    Parameters
+    ----------
+    g : seaborn.FacetGrid
+        The FacetGrid instance to use
+    df : pandas.DataFrame
+        The DataFrame in long format to plot
+    x : str
+        Column name to use for x-axis
+    y : str
+        Column name to use for y-axis
+    color : str, optional
+        Column name to use for color encoding
+    facet_row : str, optional
+        Column name used for creating row facets
+    facet_col : str, optional
+        Column name used for creating column facets
+    stacked : bool
+        Whether to create stacked charts
+    palette : dict, optional
+        Color palette to use for the plot
+    kind : str, optional
+        Kind of plot to create ('area' or 'bar')
+    ylim : tuple, optional
+        Y-axis limits for the plot
+    **kwargs : additional keyword arguments
+        Passed to plotting function
+
+    """
+    custom_case = color not in [x, y, facet_col, facet_row, None] or kind == "area"
+
+    if custom_case:
+        # Store the color palette from FacetGrid for consistent colors
+        color_order = g.hue_names if hasattr(g, "hue_names") else None
+
+        split_by_sign = df["value"].min() < 0 and df["value"].max() > 0
+
+        if kind == "bar" and x == "value":
+            kind = "barh"
+            x_var, y_var = y, x
+        else:
+            x_var, y_var = x, y
+
+        for ax, facet_data in facet_iter(g, df, facet_row, facet_col, split_by_sign):
+            # Pivot data to have x as index, color as columns, and y as values
+            if color is None:
+                pivoted = facet_data.set_index(x_var)[[y_var]]
+                color_dict = None
+            else:
+                pivoted = facet_data.pivot(index=x_var, columns=color, values=y_var)
+                color_dict = palette
+
+            # Special case of duplicate indices, e.g. carriers in groupers, but not plotted
+            if not pivoted.index.is_unique:
+                pivoted = pivoted.groupby(level=0).sum()
+
+            # Ensure columns are ordered according to the hue order
+            if color_order:
+                # Get only the columns that exist in this facet
+                available_cols = [c for c in color_order if c in pivoted.columns]
+                if available_cols:  # Only reorder if we have columns
+                    pivoted = pivoted[available_cols]
+
+            # Weird behavior in pandas plotting, have to correct the ylim if None
+            # https://github.com/pandas-dev/pandas/blob/c0371cedf3a9682596481dab87b43653a48da186/pandas/plotting/_matplotlib/core.py#L1817
+            if y == "value" and ylim is None and len(list(ax.get_shared_y_axes())) == 0:
+                ax._shared_axes["y"].join(ax, ax)  # type: ignore
+
+            # Plot with pandas - no legend to avoid duplicates
+            pivoted.plot(
+                kind=kind,
+                ax=ax,
+                stacked=stacked,
+                legend=False,
+                color=color_dict,
+                **kwargs,
+            )
+            g._update_legend_data(ax)
+        g._finalize_grid([x, y])
+
+    elif kind == "bar":
+        palette = palette if color is not None else None
+        g.map_dataframe(sns.barplot, x=x, y=y, hue=color, palette=palette, **kwargs)
+
+    return g
+
+
+class ChartGenerator(PlotsGenerator, ABC):
+    """Base class for generating charts based on statistics functions."""
+
+    def _to_title(self, s: str) -> str:
+        """Convert string to title case."""
+        return s.replace("_", " ").title()
+
+    def _validate(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Validate data has required columns and types."""
+        if "value" not in data.columns:
+            msg = "Data must contain 'value' column"
+            raise ValueError(msg)
+
+        return data
+
+    def _to_long_format(self, data: pd.DataFrame | pd.Series) -> pd.DataFrame:
+        """Convert data to long format suitable for plotting.
+
+        Parameters
+        ----------
+        data : pd.DataFrame | pd.Series
+            Input data from statistics functions, typically with multiindex
+
+        Returns
+        -------
+        pd.DataFrame
+            Long format DataFrame with multiindex levels as columns and values in 'value' column
+
+        """
+        if isinstance(data, pd.Series):
+            df = data.rename("value").reset_index()
+        else:
+            df = data.fillna(0).melt(ignore_index=False).reset_index()
+
+            # For multi-period networks, use timestep as snapshot since period is faceted
+            if "period" in df.columns and "timestep" in df.columns:
+                # Use timestep for x-axis; period will be used for faceting
+                df["snapshot"] = df["timestep"]
+                # Keep the original columns for potential faceting by period
+
+        return df
+
+    def plot(
+        self,
+        data: pd.DataFrame,
+        kind: str,
+        x: str,
+        y: str,
+        color: str | None = None,
+        facet_col: str | None = None,
+        facet_row: str | None = None,
+        stacked: bool = True,
+        nice_names: bool = True,
+        query: str | None = None,
+        sharex: bool | None = None,
+        sharey: bool | None = None,
+        height: float = 3,
+        aspect: float = 2,
+        row_order: Sequence[str] | None = None,
+        col_order: Sequence[str] | None = None,
+        col_wrap: int | None = None,
+        hue_order: Sequence[str] | None = None,
+        hue_kws: dict[str, Any] | None = None,
+        despine: bool = True,
+        margin_titles: bool = False,
+        xlim: tuple[float, float] | None = None,
+        ylim: tuple[float, float] | None = None,
+        subplot_kws: dict[str, Any] | None = None,
+        gridspec_kws: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> tuple[Figure, Axes | np.ndarray, sns.FacetGrid]:
+        """Plot method to be implemented by subclasses."""
+        self._n.consistency_check_plots(strict="all")
+        color, stacked, hue_order = adjust_collection_bar_defaults(
+            self._n, kind, color, stacked, hue_order
+        )
+
+        ldata = self._to_long_format(data)
+        if query:
+            ldata = ldata.query(query)
+        ldata = self._validate(ldata)
+
+        palette = None
+        if color in (None, "carrier"):
+            palette = self.get_carrier_colors(nice_names=nice_names)
+
+        # set shared axis to the one where "value" is plotted
+        if sharex is None:
+            sharex = x == "value"
+        if sharey is None:
+            sharey = y == "value"
+
+        # Scale facet height with the number of categorical rows per facet so
+        # distribution plots stay legible on networks with many buses/carriers.
+        if kind in DISTRIBUTION_TYPES and y == "name":
+            if facet_row:
+                n_rows = ldata.groupby(facet_row, observed=True)["name"].nunique().max()
+            else:
+                n_rows = ldata["name"].nunique()
+            height = max(
+                height, min(ROW_HEIGHT_IN * n_rows + BASE_HEIGHT_IN, MAX_HEIGHT_IN)
+            )
+
+        # Always use FacetGrid for consistency
+        g = sns.FacetGrid(
+            ldata,
+            row=facet_row,
+            col=facet_col,
+            palette=palette,
+            sharex=sharex,
+            sharey=sharey,
+            height=height,
+            aspect=aspect,
+            row_order=row_order,
+            col_order=col_order,
+            col_wrap=col_wrap,
+            hue_order=hue_order,
+            hue_kws=hue_kws,
+            despine=despine,
+            margin_titles=margin_titles,
+            xlim=xlim,
+            ylim=ylim,
+            subplot_kws=subplot_kws,
+            gridspec_kws=gridspec_kws,
+        )
+
+        # Handle special case for area and bar plots
+        if kind == "area":
+            g = map_dataframe_pandas_plot(
+                g,
+                ldata,
+                x,
+                y,
+                color,
+                facet_row,
+                facet_col,
+                stacked,
+                kind="area",
+                ylim=ylim,
+                palette=palette,
+                **kwargs,
+            )
+        elif kind == "bar":
+            g = map_dataframe_pandas_plot(
+                g,
+                ldata,
+                x,
+                y,
+                color,
+                facet_row,
+                facet_col,
+                stacked,
+                kind="bar",
+                ylim=ylim,
+                palette=palette,
+                **kwargs,
+            )
+        # Other plot types remain the same
+        elif kind in SEABORN_PLOT_FUNCS:
+            if kind in ["box", "violin"]:
+                # FacetGrid adds color internally, remove to avoid conflict with hue
+                kwargs.pop("color", None)
+            plot_kwargs = {"x": x, "y": y, "hue": color, **kwargs}
+            if color is not None:
+                plot_kwargs["palette"] = palette
+            g.map_dataframe(SEABORN_PLOT_FUNCS[kind], **plot_kwargs)
+        else:
+            msg = f"Unsupported plot type: {kind}"
+            raise ValueError(msg)
+
+        # Add legend if color is specified (for non-area plots, area plots handle this separately)
+        if color is not None:
+            g.add_legend()
+
+        # Set axis labels
+        # Get unit for legends
+        label = data.attrs.get("name", "Value")
+        unit = data.attrs.get("unit", "")
+        if unit != "carrier dependent":
+            label += f" [{unit}]"
+        if x == "value":
+            g.set_axis_labels(x_var=label)
+        elif y == "value":
+            g.set_axis_labels(y_var=label)
+
+        # Get the figure and axes from the FacetGrid
+        fig = g.fig
+        ax = g.axes  # This will be a 2D array of axes objects
+
+        # If there's only one subplot, return the single Axes object for convenience
+        if ax.size == 1:
+            ax = ax.flat[0]
+
+        return fig, ax, g
+
+    def _create_category_orders(
+        self,
+        facet_row: str | None,
+        facet_col: str | None,
+        color: str | None,
+        row_order: Sequence[str] | None,
+        col_order: Sequence[str] | None,
+        color_order: Sequence[str] | None,
+    ) -> dict[str, Sequence[str]]:
+        """Create a filtered dictionary of category orders for Plotly Express.
+
+        Order values are sanitized like the plotted data so LaTeX carrier
+        names still match.
+        """
+
+        def sanitize(order: Sequence[str]) -> list:
+            return [sanitize_mathtext(v) if isinstance(v, str) else v for v in order]
+
+        category_orders: dict[str, Sequence[str]] = {}
+        if facet_row is not None and row_order is not None:
+            category_orders[facet_row] = sanitize(row_order)
+        if facet_col is not None and col_order is not None:
+            category_orders[facet_col] = sanitize(col_order)
+        if color is not None and color_order is not None:
+            category_orders[color] = sanitize(color_order)
+        return category_orders
+
+    def iplot(
+        self,
+        data: pd.DataFrame,
+        kind: str,
+        x: str,
+        y: str,
+        color: str | None = None,
+        facet_col: str | None = None,
+        facet_row: str | None = None,
+        stacked: bool = True,
+        nice_names: bool = True,
+        query: str | None = None,
+        sharex: bool | None = None,
+        sharey: bool | None = None,
+        height: int = 500,
+        width: int = 800,
+        row_order: Sequence[str] | None = None,
+        col_order: Sequence[str] | None = None,
+        color_order: Sequence[str] | None = None,
+        color_discrete_map: dict[str, str] | None = None,
+        range_x: list[float] | None = None,
+        range_y: list[float] | None = None,
+        labels: dict[str, str] | None = None,
+        title: str | None = None,
+        **kwargs: Any,
+    ) -> go.Figure:
+        """Interactive plot method creating charts with Plotly Express."""
+        self._n.consistency_check_plots(strict="all")
+        ldata = self._to_long_format(data)
+        if query:
+            ldata = ldata.query(query)
+        ldata = self._validate(ldata)
+
+        ldata = ldata.apply(
+            lambda col: (
+                col.map(sanitize_mathtext)
+                if pd.api.types.is_string_dtype(col.dtype)
+                else col
+            )
+        )
+
+        # Aggregate scenarios and calculate error bars for bar plots
+        # Only aggregate if we have actual stochastic scenarios (not just a column named 'scenario')
+        aggregated_with_std = None
+        has_stochastic_scenarios = self._n.has_scenarios
+
+        if kind == "bar" and "scenario" in ldata.columns and has_stochastic_scenarios:
+            ldata, aggregated_with_std = aggregate_scenarios_for_plotly(ldata)
+            # Remove 'scenario' from parameters since it's been aggregated
+            if facet_col == "scenario":
+                facet_col = None
+            if facet_row == "scenario":
+                facet_row = None
+            if color == "scenario":
+                color = None
+
+        # Get carrier colors for the plot
+        carrier_colors = self.get_carrier_colors(nice_names=nice_names)
+        carrier_colors = {sanitize_mathtext(k): v for k, v in carrier_colors.items()}
+
+        # Set up labels dictionary for axis labels
+        if labels is None:
+            labels = {}
+
+        # Get unit for legends
+        data_label = data.attrs.get("name", "Value")
+        unit = data.attrs.get("unit", "")
+        if unit != "carrier dependent":
+            data_label += f" [{unit}]"
+
+        if x == "value":
+            labels[x] = data_label
+        elif y == "value":
+            labels[y] = data_label
+
+        # Handle categorical axes to avoid auto-sorting
+        if x != "value" and pd.api.types.is_string_dtype(ldata[x].dtype):
+            ldata[x] = pd.Categorical(
+                ldata[x], categories=ldata[x].unique(), ordered=True
+            )
+        label_every_row = False
+        if y != "value" and pd.api.types.is_string_dtype(ldata[y].dtype):
+            ldata[y] = pd.Categorical(
+                ldata[y], categories=ldata[y].unique(), ordered=True
+            )
+            scaled_height = ROW_HEIGHT_PX * ldata[y].nunique() + BASE_HEIGHT_PX
+            height = max(height, min(scaled_height, MAX_HEIGHT_PX))
+            label_every_row = scaled_height <= MAX_HEIGHT_PX
+
+        if kind == "bar" and color in {x, y}:
+            color = None
+
+        # Prepare color mapping if color column is provided
+        if color and color_discrete_map is None and color in ldata.columns:
+            color_values = ldata[color].unique()
+            if all(value in carrier_colors for value in color_values):
+                color_discrete_map = {
+                    value: carrier_colors.get(value, "#AAAAAA")
+                    for value in color_values
+                }
+
+        # Set default title if none is provided
+        if title is None:
+            title = self._to_title(data.attrs.get("name", ""))
+
+        # Create category orders dict
+        category_orders = self._create_category_orders(
+            facet_row, facet_col, color, row_order, col_order, color_order
+        )
+
+        # Create appropriate plot based on kind
+        if kind == "bar":
+            # Handle regular vs stacked bar charts
+            if stacked and color is not None:
+                barmode = "stack"
+            else:
+                barmode = "group"
+
+            fig = px.bar(
+                ldata,
+                x=x,
+                y=y,
+                color=color,
+                facet_col=facet_col,
+                facet_row=facet_row,
+                height=height,
+                width=width,
+                facet_col_wrap=kwargs.get("facet_col_wrap", 0),
+                category_orders=category_orders,
+                color_discrete_map=color_discrete_map,
+                barmode=barmode,
+                range_x=range_x,
+                range_y=range_y,
+                labels=labels,
+                title=title,
+                **{k: v for k, v in kwargs.items() if k not in ["facet_col_wrap"]},
+            )
+
+            # Apply error bars if we have scenarios
+            if (
+                aggregated_with_std is not None
+                and "value_std" in aggregated_with_std.columns
+            ):
+                # Match error bars to traces based on color (usually carrier)
+                # Each trace corresponds to one value of the color parameter
+                for trace in fig.data:
+                    if (
+                        hasattr(trace, "name")
+                        and trace.name
+                        and color
+                        and color in aggregated_with_std.columns
+                    ):
+                        # Filter aggregated data for this trace's color value
+                        mask = aggregated_with_std[color] == trace.name
+                        error_values = aggregated_with_std.loc[mask, "value_std"].values
+
+                        if len(error_values) > 0:
+                            # Apply error bars based on which axis has 'value'
+                            if x == "value":
+                                trace.error_x = go.bar.ErrorX(
+                                    type="data", array=error_values, visible=True
+                                )
+                            elif y == "value":
+                                trace.error_y = go.bar.ErrorY(
+                                    type="data", array=error_values, visible=True
+                                )
+
+        elif kind == "line":
+            fig = px.line(
+                ldata,
+                x=x,
+                y=y,
+                color=color,
+                facet_col=facet_col,
+                facet_row=facet_row,
+                height=height,
+                width=width,
+                facet_col_wrap=kwargs.get("facet_col_wrap", 0),
+                category_orders=category_orders,
+                color_discrete_map=color_discrete_map,
+                range_x=range_x,
+                range_y=range_y,
+                labels=labels,
+                title=title,
+                **{k: v for k, v in kwargs.items() if k not in ["facet_col_wrap"]},
+            )
+
+        elif kind == "area":
+            kwargs = dict(
+                x=x,
+                y=y,
+                color=color,
+                facet_col=facet_col,
+                facet_row=facet_row,
+                height=height,
+                width=width,
+                facet_col_wrap=kwargs.get("facet_col_wrap", 0),
+                category_orders=category_orders,
+                color_discrete_map=color_discrete_map,
+                range_x=range_x,
+                range_y=range_y,
+                labels=labels,
+                title=title,
+                **{k: v for k, v in kwargs.items() if k not in ["facet_col_wrap"]},
+            )
+
+            if stacked:
+                pos = ldata[ldata.value > 0]
+                neg = ldata[ldata.value < 0]
+                positives = px.area(pos, **kwargs)
+                positives.update_traces(
+                    stackgroup="positive",
+                    showlegend=False,
+                )
+                negatives = px.area(neg, **kwargs)
+                negatives.update_traces(
+                    stackgroup="negative",
+                    showlegend=False,
+                )
+
+                # In order to not bloat the hover display with zeros, we need to
+                # filter out zeros in ldata as done below. However, then the legend
+                # only shows for the latest traces (ignoring the positive values).
+                # To fix this, we need to add an artificial trace with the last value
+                # of each color and use that for the legend.
+                unique_colors = ldata[color].unique() if color else []
+                n_colors = len(unique_colors)
+                artificial_zeros = pd.DataFrame(
+                    {
+                        x: [ldata[x].iloc[-1]] * n_colors,
+                        y: [np.nan] * n_colors,
+                        color: unique_colors,
+                    }
+                )
+                if facet_col:
+                    artificial_zeros[facet_col] = ldata[facet_col].iloc[-1]
+                if facet_row:
+                    artificial_zeros[facet_row] = ldata[facet_row].iloc[-1]
+
+                artificials = px.area(
+                    artificial_zeros,
+                    **kwargs,
+                )
+
+                # Combine the figures
+                fig = positives.add_traces(negatives.data).add_traces(artificials.data)
+            else:
+                fig = px.area(ldata, **kwargs)
+            fig.update_traces(line={"width": 0})
+            fig.update_layout(hovermode="x")
+        else:
+            msg = f"Unsupported plot type: {kind}"
+            raise ValueError(msg)
+
+        # Update layout
+        fig.update_layout(
+            template="plotly_white", margin={"l": 50, "r": 50, "t": 50, "b": 50}
+        )
+
+        if not sharex and sharex is not None:
+            fig.update_xaxes(matches=None, showticklabels=True)
+        if not sharey and sharey is not None:
+            fig.update_yaxes(matches=None, showticklabels=True)
+
+        if label_every_row:
+            fig.update_yaxes(dtick=1)
+
+        return fig
+
+    def derive_statistic_parameters(
+        self,
+        *args: Any,
+        method_name: str,
+        chart_type: str = "",
+    ) -> dict[str, Any]:
+        """Extract plotting specification rules including groupby columns and component aggregation.
+
+        Parameters
+        ----------
+        *args : tuple of (str | None)
+            Arguments representing x, y, color, facet_col, facet_row parameters
+        method_name : str
+            Name of the statistics function to allow for specific rules
+        chart_type : str, optional
+            Name of the chart type to allow for specific rules (e.g. distributions
+            need the full time series).
+
+        Returns
+        -------
+        dict
+            Statistics function kwargs (`groupby`,
+            `aggregate_across_components`, `groupby_time`) derived from the
+            plot arguments.
+
+        """
+        filtered = ["value", "name", "snapshot", "scenario", "period"]
+        filtered_cols = [c for c in args if c not in filtered and c is not None]
+
+        stats_kwargs: dict[str, str | bool | list] = {}
+        stats_params = _stats_function_params(self._n, method_name)
+        has_components = "aggregate_across_components" in stats_params
+
+        # `groupby`
+        filtered_cols = list(set(filtered_cols))  # Remove duplicates
+        if filtered_cols:
+            # Component-less statistics (e.g. prices) keep per-bus rows in
+            # distribution plots; groupers become additional index levels.
+            if chart_type in DISTRIBUTION_TYPES and not has_components:
+                filtered_cols = ["name", *filtered_cols]
+            stats_kwargs["groupby"] = filtered_cols
+
+        # `aggregate_across_components`
+        if has_components:
+            stats_kwargs["aggregate_across_components"] = "component" not in args
+
+        # `groupby_time`: time series axes and distribution plots need the
+        # full time series, not its aggregate.
+        if (
+            "groupby_time" in stats_params
+            and method_name not in TIME_AGGREGATED_STATS
+            and ("snapshot" in args or chart_type in DISTRIBUTION_TYPES)
+        ):
+            stats_kwargs["groupby_time"] = False
+
+        return stats_kwargs

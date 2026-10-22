@@ -1,0 +1,5 @@
+* -text
+*.sh text eol=lf
+*.whl binary
+*.deb binary
+*.gz binary

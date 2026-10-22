@@ -1,0 +1,30 @@
+artifacts = ["/app/src"]
+schema_version = "1.3"
+
+[task]
+name = "local/pypsa-multistage-operational-policy"
+description = "逐时信息揭示下的机组、储能与故障网络风险调度"
+authors = [{ name = "wyw" }]
+keywords = ["PyPSA", "multistage", "unit-commitment", "storage", "nested-CVaR"]
+
+[agent]
+timeout_sec = 3600
+
+[environment]
+build_timeout_sec = 1200
+cpus = 1
+memory_mb = 4096
+storage_mb = 6144
+gpus = 0
+allow_internet = true
+
+[verifier]
+environment_mode = "separate"
+user = "root"
+timeout_sec = 600
+
+[metadata]
+difficulty = "hard"
+category = "F.2 能源系统"
+tags = ["stochastic-control", "mixed-integer-optimization", "power-systems"]
+expert_time_estimate = "8h"

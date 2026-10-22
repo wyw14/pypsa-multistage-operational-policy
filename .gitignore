@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+environment/debs/download.log
+environment/debs/lock
+environment/debs/partial/
+*.log
+.collected-nodeids.json

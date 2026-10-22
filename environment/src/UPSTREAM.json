@@ -1,0 +1,10 @@
+{
+  "project": "PyPSA/PyPSA",
+  "url": "https://github.com/PyPSA/PyPSA",
+  "version": "v1.4.0",
+  "commit": "6c45594596cbc5612511ee9202a9e269e5001d88",
+  "archive": "https://codeload.github.com/PyPSA/PyPSA/zip/6c45594596cbc5612511ee9202a9e269e5001d88",
+  "license": "MIT (source)",
+  "source_scope": "The complete upstream pypsa Python package; optimization accessor extension and policy_schema.py are task additions.",
+  "task_origin": "Author-defined extension, not a claim of an upstream defect or production incident."
+}

@@ -1,0 +1,279 @@
+# SPDX-FileCopyrightText: PyPSA Contributors
+#
+# SPDX-License-Identifier: MIT
+
+"""Network descriptors module.
+
+Contains single mixin class which is used to inherit to [pypsa.Networks] class.
+Should not be used directly.
+
+Descriptor functions only describe data and do not modify it.
+
+"""
+
+from __future__ import annotations
+
+import logging
+from itertools import repeat
+from typing import TYPE_CHECKING
+
+import pandas as pd
+from deprecation import deprecated
+
+from pypsa.common import normalize_carrier_nice_names
+from pypsa.components.common import as_components
+from pypsa.network.abstract import _NetworkABC
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+
+
+logger = logging.getLogger(__name__)
+
+
+class NetworkDescriptorsMixin(_NetworkABC):
+    """Mixin class for network descriptor methods.
+
+    Class inherits to [pypsa.Network][]. All attributes and methods can be used
+    within any Network instance.
+    """
+
+    @deprecated(
+        deprecated_in="1.0.0",
+        removed_in="2.0.0",
+        details="Use `n.components[c].extendables` instead.",
+    )
+    def get_extendable_i(self, c: str) -> pd.Index:
+        """Getter function.
+
+        Get the index of extendable elements of a given component.
+
+        Deprecated: Use n.components[c].get_extendable_i() instead.
+        """
+        return self.components[c].extendables
+
+    @deprecated(
+        deprecated_in="1.0.0",
+        removed_in="2.0.0",
+        details="Use `n.components[c].fixed` instead.",
+    )
+    def get_non_extendable_i(self, c: str) -> pd.Index:
+        """Getter function.
+
+        Get the index of non-extendable elements of a given component.
+
+        Deprecated: Use n.components[c].self.fixed instead.
+        """
+        return self.components[c].fixed
+
+    @deprecated(
+        deprecated_in="1.0.0",
+        removed_in="2.0.0",
+        details="Use `n.components[c].committables` instead.",
+    )
+    def get_committable_i(self, c: str) -> pd.Index:
+        """Getter function.
+
+        Get the index of commitable elements of a given component.
+
+        Deprecated: Use n.components[c].get_committable_i() instead.
+        """
+        return self.components[c].committables
+
+    @deprecated(
+        deprecated_in="1.0.0",
+        removed_in="2.0.0",
+        details="Use `n.components[c].get_active_assets` instead.",
+    )
+    def get_active_assets(
+        self,
+        c: str,
+        investment_period: int | str | Sequence | None = None,
+    ) -> pd.Series:
+        """Get active components mask of component type in investment period(s).
+
+        See the [`pypsa.components.descriptors.ComponentsDescriptorsMixin.get_active_assets`][].
+
+        Parameters
+        ----------
+        c : string
+            Component name
+        investment_period : int, str, Sequence
+            Investment period(s) to check
+
+        Returns
+        -------
+        pd.Series
+            Boolean mask for active components
+
+        """
+        return self.components[c].get_active_assets(investment_period=investment_period)
+
+    def get_switchable_as_dense(
+        self,
+        component: str,
+        attr: str,
+        snapshots: Sequence | None = None,
+        inds: pd.Index | None = None,
+    ) -> pd.DataFrame:
+        """Return a Dataframe for a time-varying component attribute .
+
+        Values for all non-time-varying components are filled in with the default
+        values for the attribute.
+
+        Parameters
+        ----------
+        component : string
+            Component object name, e.g. 'Generator' or 'Link'
+        attr : string
+            Attribute name
+        snapshots : pandas.Index
+            Restrict to these snapshots rather than n.snapshots.
+        inds : pandas.Index
+            Restrict to these component names rather than all components. For
+            stochastic networks, the names are selected in all scenarios. The
+            columns follow component order, duplicates are collapsed and unknown
+            names dropped. In PyPSA 2.0, columns follow `inds` order, duplicates
+            are kept and unknown names raise a `KeyError`.
+
+        Returns
+        -------
+        pandas.DataFrame
+
+        Examples
+        --------
+        >>> n.get_switchable_as_dense('Generator', 'p_max_pu', n.snapshots[:2]) # doctest: +SKIP
+        Generator            Manchester Wind  Manchester Gas  Norway Wind  Norway Gas  Frankfurt Wind  Frankfurt Gas
+        snapshot
+        2015-01-01 00:00:00         0.930020             1.0     0.974583         1.0        0.559078            1.0
+        2015-01-01 01:00:00         0.485748             1.0     0.481290         1.0        0.752910            1.0
+
+        """
+        return as_components(self, component)._as_dynamic(attr, snapshots, inds)
+
+    def get_switchable_as_iter(
+        self,
+        component: str,
+        attr: str,
+        snapshots: Sequence,
+        inds: pd.Index | None = None,
+    ) -> Iterator[pd.Series]:
+        """Return an iterator over snapshots for a time-varying component attribute.
+
+        Values for all non-time-varying components are filled in with the default
+        values for the attribute.
+
+        Parameters
+        ----------
+        component : string
+            Component object name, e.g. 'Generator' or 'Link'
+        attr : string
+            Attribute name
+        snapshots : pandas.Index
+            Restrict to these snapshots rather than n.snapshots.
+        inds : pandas.Index
+            Restrict to these component names rather than all components. For
+            stochastic networks, the names are selected in all scenarios. The
+            result follows the order of `inds`. Duplicates and unknown names are
+            dropped.
+
+        Returns
+        -------
+        Iterator[pandas.Series]
+            One Series per snapshot, indexed by component.
+
+        Examples
+        --------
+        >>> gen = n.get_switchable_as_iter('Generator', 'p_max_pu', n.snapshots[:2])
+        >>> next(gen)  # doctest: +ELLIPSIS
+        name
+        Manchester Wind    0.930020
+        Manchester Gas     1.000000
+        Norway Wind        0.974583
+        Norway Gas         1.000000
+        Frankfurt Wind     0.559078
+        Frankfurt Gas      1.000000
+        dtype: float64
+
+        """
+        static = self.c[component].static
+        dynamic = self.c[component].dynamic
+
+        index = static.index
+        if inds is not None:
+            names = pd.Index(inds, name="name").unique()
+            if isinstance(index, pd.MultiIndex):
+                names = pd.MultiIndex.from_product([index.unique("scenario"), names])
+            index = names[names.isin(index)]
+        varying_i = index[index.isin(dynamic[attr].columns)]
+        fixed_i = index[~index.isin(varying_i)]
+
+        # Short-circuit only fixed
+        if len(varying_i) == 0:
+            return repeat(static.loc[fixed_i, attr], len(snapshots))
+
+        def is_same_indices(i1: pd.Index, i2: pd.Index) -> bool:
+            return len(i1) == len(i2) and (i1 == i2).all()
+
+        if is_same_indices(fixed_i.union(varying_i, sort=False), index):
+
+            def reindex_maybe(s: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
+                return s
+
+        else:
+
+            def reindex_maybe(s: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
+                return s.reindex(index)
+
+        return (
+            reindex_maybe(
+                pd.concat(
+                    [static.loc[fixed_i, attr], dynamic[attr].loc[sn, varying_i]],
+                    axis=0,
+                )
+            )
+            for sn in snapshots
+        )
+
+    def bus_carrier_unit(self, bus_carrier: str | Sequence[str] | None) -> str:
+        """Determine the unit associated with a specific bus carrier in the network.
+
+        Parameters
+        ----------
+        bus_carrier : str | Sequence[str] | None
+            The carrier type of the bus to query.
+
+        Returns
+        -------
+        str:
+            The unit associated with the specified bus carrier. If no bus carrier is
+            provided, returns `"carrier dependent"`.
+
+        Raises
+        ------
+        ValueError
+            If the specified bus carrier is not found in the network or if multiple
+            units are found for the specified bus carrier.
+
+        """
+        bus_carrier = normalize_carrier_nice_names(
+            self.c.carriers.static.nice_name, bus_carrier
+        )
+
+        if bus_carrier is None:
+            return "carrier dependent"
+
+        if isinstance(bus_carrier, str):
+            bus_carrier = [bus_carrier]
+
+        not_included = set(bus_carrier) - set(self.c.buses.static.carrier.unique())
+        if not_included:
+            msg = f"Bus carriers {not_included} not in network"
+            raise ValueError(msg)
+        unit = self.c.buses.static[
+            self.c.buses.static.carrier.isin(bus_carrier)
+        ].unit.unique()
+        if len(unit) > 1:
+            logger.warning("Multiple units found for carrier %s: %s", bus_carrier, unit)
+            return "carrier dependent"
+        return unit.item()
