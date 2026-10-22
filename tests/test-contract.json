@@ -2,6 +2,7 @@
   "nodeids": [
     "test_task.py::test_native_deterministic_entry_still_works",
     "test_task.py::test_uc_initial_history_ramps_and_leaf_obligations",
+    "test_task.py::test_advance_commitment_cannot_use_the_next_observation",
     "test_task.py::test_advance_commitment_and_nested_conditional_risk[0-0.8]",
     "test_task.py::test_advance_commitment_and_nested_conditional_risk[0.65-0.73]",
     "test_task.py::test_advance_commitment_and_nested_conditional_risk[1-0.5]",
@@ -29,7 +30,7 @@
     "pytest.ini": "1c4ea57d78b41c8cdb046467d2069100704adaadfd72025e54ea5c0e1010092c",
     "requirements-test.txt": "512657e574994ee3094aa35f5482cce0d052c589d6ad049e69836bbc9d939695",
     "test.sh": "5f88cf47bb57281523daca6a01aaf2693982cc203236910bc814b24180b81525",
-    "test_task.py": "a3c8d1b166e93f4391a8bcc6d6015b79709c99510430a6cdef17c485c51545fe",
+    "test_task.py": "b4c123b14f29a1bca87e13f4a3962bdd2d479a04cab2d8dd769a45e3c435bb69",
     "trusted_runner.py": "c155fca30a759ae96dea144804370e97c51b1686fbbc747c1ecf5e69caa9fe27",
     "wheels-sha256.txt": "5449bf76235bdd76ddc6a5dae7db6cb9436e22ea692007be30e491f2b5822c35",
     "wire_codec.py": "3d61ba0574574b7bbe36dfc26ffa0e57b4d94b16b78c3e91b24c64ffa343e7dc"

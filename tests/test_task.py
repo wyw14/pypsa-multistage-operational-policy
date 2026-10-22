@@ -234,6 +234,21 @@ def test_uc_initial_history_ramps_and_leaf_obligations():
     checked(case)
 
 
+def test_advance_commitment_cannot_use_the_next_observation():
+    """A zero-demand sibling and costly sibling force one shared prior command."""
+    case=base_case()
+    no_storage(case)
+    case["tree"]=[node("root",None,0,la=1,lb=1,pv=1),
+        node("quiet","root",1,0.7,la=0,lb=0,pv=0),
+        node("scarce","root",1,0.3,la=2,lb=3,pv=0)]
+    optimum,schedules=exhaustive_optimum(case)
+    # Positive minimum generation has nowhere to go on the quiet sibling.
+    # A single prior commitment therefore leaves both children offline.
+    close(optimum,422.8)
+    assert schedules==2
+    validate(case,candidate.run(case),optimum)
+
+
 @pytest.mark.parametrize("weight,alpha",[(0,0.8),(0.65,0.73),(1,0.5),(0.8,0)])
 def test_advance_commitment_and_nested_conditional_risk(weight,alpha):
     """Conditional tree risk and sibling commitments match risk-envelope LPs."""
