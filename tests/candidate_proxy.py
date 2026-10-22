@@ -206,6 +206,10 @@ class Candidate:
         """Invoke the public JSON task function without trusted imports."""
         return self.call("solve", payload, timeout=timeout)
 
+    def native_policy(self, payload, timeout=90):
+        """Request worker observations of the public native call itself."""
+        return self.call("__native_policy_probe__", payload, timeout=timeout)
+
     def __getattr__(self, name):
         """Expose public candidate functions through the transport boundary."""
         if name.startswith("_"):

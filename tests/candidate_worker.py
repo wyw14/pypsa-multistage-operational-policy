@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wire_codec import pack, unpack
 from candidate_sandbox import restrict
+from native_state import native_policy_probe
 
 MAX_WIRE = 16 * 1024 * 1024
 
@@ -60,7 +61,10 @@ def main():
         request = json.loads(line)
         args, kwargs = unpack(request["args"]), unpack(request["kwargs"])
         try:
-            value = getattr(candidate, request["function"])(*args, **kwargs)
+            if request["function"] == "__native_policy_probe__":
+                value = native_policy_probe(*args, **kwargs)
+            else:
+                value = getattr(candidate, request["function"])(*args, **kwargs)
             message = {"ok": True, "value": pack(value)}
         except Exception as exc:
             message = {

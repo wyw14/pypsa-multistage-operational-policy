@@ -1174,3 +1174,21 @@ def test_large_soc_origin_cannot_erase_a_material_charging_requirement(increment
         exact_cost, abs=2e-5, rel=2e-6)
     independent, _ = exhaustive_optimum(case)
     assert independent == pytest.approx(exact_cost, abs=2e-5, rel=2e-6)
+
+
+def test_native_policy_preserves_public_network_state():
+    """“函数不能改变传入的 network、tree 或 options”
+
+    A real Network is constructed and observed by the isolated worker. The
+    trusted parent compares all public component static/time-series tables,
+    snapshots/weights and metadata, including NaN/index/dtype semantics. The
+    policy must independently attain the same analytic unit-cost lower bound.
+    """
+    case = mixed_cost_scale_case()
+    case["options"].update(risk_weight=0.0, alpha=0.0)
+    diagnostic = candidate.native_policy(case)
+    answer = json.loads(json.dumps(diagnostic["result"], allow_nan=False))
+    validate(case, answer, 1.0)
+    before, after = diagnostic["before"], diagnostic["after"]
+    changed = sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
+    assert before == after, f"Native policy changed public Network state: {changed}"
