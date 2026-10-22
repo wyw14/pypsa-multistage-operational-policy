@@ -49,7 +49,7 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$workspace" \
     OMP_NUM_THREADS=1 PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
     PYTHONSAFEPATH=1 PYTHONPATH=/tests PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
     CANDIDATE_PID_LEDGER="$workspace/candidate-pids.txt" \
-    /usr/bin/timeout --signal=TERM --kill-after=5s 540s \
+    /usr/bin/timeout --foreground --signal=TERM --kill-after=5s 540s \
     /usr/local/bin/pytest /tests/test_outputs.py -q --tb=short \
     -p no:cacheprovider -p trusted_runner --trusted-ledger "$workspace/outcomes.json" \
     -c /tests/pytest.ini --confcutdir=/tests --rootdir=/tests \

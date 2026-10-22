@@ -1,6 +1,7 @@
 """Author reference implementation for the public finite policy-tree contract."""
 
 import math
+import time
 from fractions import Fraction
 import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
@@ -18,6 +19,8 @@ class Model:
         self.rows = []
         self.lo = []
         self.hi = []
+        self.economic = []
+        self.physical_tolerances = []
 
     def var(self, key, low=0, high=np.inf, binary=False, scale=1.0):
         i = len(self.lower)
@@ -28,21 +31,32 @@ class Model:
         self.scales.append(float(scale) if scale > 0 else 1.0)
         return i
 
-    def constraint(self, terms, low=-np.inf, high=np.inf):
+    def constraint(
+        self, terms, low=-np.inf, high=np.inf, economic=False, physical_tolerance=None
+    ):
         self.rows.append({i: value for i, value in terms.items() if value})
         self.lo.append(low)
         self.hi.append(high)
+        self.economic.append(economic)
+        self.physical_tolerances.append(physical_tolerance)
 
-    def solve(self, root):
+    def solve(self, root, time_limit=75, feasibility=False):
         r, c, data = [], [], []
+        # Work in increments from finite lower bounds. A large stored-energy
+        # origin must not hide a small, economically material change in SOC.
+        offsets = np.array([lo if np.isfinite(lo) else 0.0 for lo in self.lower])
+        scales = np.asarray(self.scales).copy()
+        for i, (lo, hi) in enumerate(zip(self.lower, self.upper)):
+            if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+                scales[i] = min(scales[i], hi - lo)
+        self.scales = list(scales)
         lower = np.asarray(self.lo, dtype=float).copy()
         upper = np.asarray(self.hi, dtype=float).copy()
         for j, row in enumerate(self.rows):
-            fixed = math.fsum(
-                value * self.lower[i]
-                for i, value in row.items()
-                if self.lower[i] == self.upper[i]
-            )
+            if feasibility and self.economic[j]:
+                lower[j], upper[j] = -np.inf, np.inf
+                continue
+            fixed = math.fsum(value * offsets[i] for i, value in row.items())
             lower[j] -= fixed
             upper[j] -= fixed
             transformed = {
@@ -53,8 +67,9 @@ class Model:
             row_scale = max(
                 [abs(value) for value in transformed.values()]
                 + [abs(value) for value in (lower[j], upper[j]) if np.isfinite(value)]
-                + [1.0]
+                + [0.0]
             )
+            row_scale = row_scale if row_scale > 0 else 1.0
             lower[j] /= row_scale
             upper[j] /= row_scale
             for i, value in transformed.items():
@@ -65,21 +80,57 @@ class Model:
             (data, (r, c)), shape=(len(self.rows), len(self.lower))
         ).tocsc()
         obj = np.zeros(len(self.lower))
-        obj[root] = 1
-        scales = np.asarray(self.scales)
+        obj[root] = 0 if feasibility else 1
         result = milp(
             obj,
             integrality=self.integer,
             bounds=Bounds(
-                np.asarray(self.lower) / scales, np.asarray(self.upper) / scales
+                (np.asarray(self.lower) - offsets) / scales,
+                (np.asarray(self.upper) - offsets) / scales,
             ),
             constraints=LinearConstraint(mat, lower, upper),
-            options={"time_limit": 75, "mip_rel_gap": 1e-9, "presolve": True},
+            options={
+                "time_limit": max(0.01, time_limit),
+                "mip_rel_gap": 1e-9,
+                "presolve": True,
+            },
         )
         if result.x is not None:
-            result.x = result.x * scales
+            result.x = result.x * scales + offsets
+            for i, integer in enumerate(self.integer):
+                if integer:
+                    result.x[i] = round(result.x[i])
             result.fun = result.fun * scales[root]
         return result
+
+    def physical_residuals_valid(self, x):
+        if x is None or not np.all(np.isfinite(x)):
+            return False
+        for key, i in self.keys.items():
+            if key[1] in {"cost", "risk", "eta", "excess"}:
+                continue
+            value = x[i]
+            if value < self.lower[i] - 2e-7 or value > self.upper[i] + 2e-7:
+                return False
+            if self.integer[i] and abs(value - round(value)) > 1e-7:
+                return False
+        for row, lo, hi, economic, explicit_tolerance in zip(
+            self.rows, self.lo, self.hi, self.economic, self.physical_tolerances
+        ):
+            if economic:
+                continue
+            terms = [coefficient * x[i] for i, coefficient in row.items()]
+            value = math.fsum(terms)
+            if explicit_tolerance is not None:
+                tolerance = explicit_tolerance
+            elif lo == hi:
+                magnitude = max([abs(lo)] + [abs(term) for term in terms])
+                tolerance = max(64 * math.ulp(magnitude), 1e-10 * min(1, abs(lo)))
+            else:
+                tolerance = 2e-7
+            if value < lo - tolerance or value > hi + tolerance:
+                return False
+        return True
 
 
 def _add(terms, i, value):
@@ -131,7 +182,8 @@ def _cost_bounds(n, d, options):
             for g in d["thermal"]
         )
         cost += math.fsum(
-            d["nodes"][a]["load"][l] * options["shed_cost"][l] for l in d["loads"]
+            d["nodes"][a]["load"][component_name] * options["shed_cost"][component_name]
+            for component_name in d["loads"]
         )
         cost += math.fsum(
             options["throughput_cost"][s]
@@ -166,6 +218,116 @@ def _cost_bounds(n, d, options):
                     quantiles[a] = value
                     break
     return local, risk, quantiles
+
+
+def _local_cost_terms(n, d, options, node):
+    terms = {}
+    for g in d["gens"]:
+        terms[node, "p", g] = float(n.generators.at[g, "marginal_cost"])
+        if g in d["thermal"]:
+            for field, column in (
+                ("u", "stand_by_cost"),
+                ("start", "start_up_cost"),
+                ("stop", "shut_down_cost"),
+            ):
+                terms[node, field, g] = float(n.generators.at[g, column])
+    for component_name in d["loads"]:
+        terms[node, "shed", component_name] = options["shed_cost"][component_name]
+    for s in d["stores"]:
+        fee = options["throughput_cost"][s]
+        terms[node, "charge", s] = fee
+        terms[node, "discharge", s] = fee + float(
+            n.storage_units.at[s, "marginal_cost"]
+        )
+    return terms
+
+
+def _actual_risks(model, x, n, d, options):
+    costs, risks = {}, {}
+    for node in reversed(d["ordered"]):
+        costs[node] = math.fsum(
+            coefficient * x[model.keys[key]]
+            for key, coefficient in _local_cost_terms(n, d, options, node).items()
+        )
+        children = d["children"][node]
+        values = [risks[c] for c in children]
+        qs = [d["nodes"][c]["probability"] for c in children]
+        risks[node] = costs[node]
+        if children:
+            risks[node] += (1 - options["risk_weight"]) * math.fsum(
+                q * v for q, v in zip(qs, values)
+            ) + options["risk_weight"] * _tail(values, qs, options["alpha"])
+    return costs, risks
+
+
+def _tighten_economic_bounds(model, x, n, d, options):
+    """Use a feasible incumbent, not the most expensive available generator.
+
+    Costs are nonnegative and each conditional risk dominates its expectation.
+    Thus V(root) >= reach_probability(node)*V(node).  Division is exact rational
+    arithmetic, so no positive probability or small-probability large loss is
+    removed. The harmless outward margin covers incumbent serialization noise.
+    Each paid physical action is bounded by this same local cost budget before
+    rescaling. In particular, an unused expensive unit cannot erase cheap costs.
+    """
+    costs, risks = _actual_risks(model, x, n, d, options)
+    if any(cost < 0 for cost in costs.values()):
+        return None
+    objective = risks[d["root"]]
+    upper = Fraction(float(objective + 64 * math.ulp(objective)))
+    reach, budgets = {}, {}
+    for node in d["ordered"]:
+        parent = d["nodes"][node]["parent"]
+        if parent is None:
+            reach[node] = Fraction(1)
+        else:
+            # Admission permits a 1e-10 sum error. Dividing by max(1,sum q)
+            # makes this bound conservative also for such accepted inputs.
+            total = sum(
+                Fraction(float(d["nodes"][c]["probability"]))
+                for c in d["children"][parent]
+            )
+            reach[node] = (
+                reach[parent]
+                * Fraction(float(d["nodes"][node]["probability"]))
+                / max(Fraction(1), total)
+            )
+        budget = upper / reach[node]
+        original = model.upper[model.keys[node, "risk"]]
+        budgets[node] = float(min(Fraction(float(original)), budget))
+        for field in ("cost", "risk"):
+            i = model.keys[node, field]
+            model.upper[i] = min(model.upper[i], budgets[node])
+            model.scales[i] = model.upper[i] if model.upper[i] > 0 else 1.0
+        for key, coefficient in _local_cost_terms(n, d, options, node).items():
+            if coefficient <= 0:
+                continue
+            i = model.keys[key]
+            cap = float(
+                min(
+                    Fraction(float(model.upper[i])),
+                    budget / Fraction(float(coefficient)),
+                )
+            )
+            model.upper[i] = cap
+            if not model.integer[i] and cap > 0:
+                model.scales[i] = cap
+    for node in d["ordered"]:
+        if (node, "eta") in model.keys:
+            i = model.keys[node, "eta"]
+            # lambda*eta is a nonnegative contribution to this parent's V.
+            # A rare expensive child must not choose eta's numerical unit.
+            model.upper[i] = min(
+                model.upper[i],
+                budgets[node] / options["risk_weight"],
+                max(budgets[c] for c in d["children"][node]),
+            )
+            model.scales[i] = model.upper[i] if model.upper[i] > 0 else 1.0
+            for child in d["children"][node]:
+                i = model.keys[node, "excess", child]
+                model.upper[i] = min(model.upper[i], budgets[child])
+                model.scales[i] = model.upper[i] if model.upper[i] > 0 else 1.0
+    return objective
 
 
 def _electrical_forest(network, domain, node):
@@ -234,6 +396,7 @@ def _public_angles(network, domain, forest, flow):
 
 
 def optimize_policy_tree(network, tree, options):
+    started = time.monotonic()
     d = normalize(network, tree, options)
     n, m = network, Model()
     ix = m.keys
@@ -246,25 +409,51 @@ def optimize_policy_tree(network, tree, options):
     for a in order:
         parent = nodes[a]["parent"]
         histories[a] = (histories[parent] if parent is not None else []) + [a]
-        for l in d["lines"]:
-            cap = float(n.lines.at[l, "s_nom"]) if nodes[a]["line_status"][l] else 0
-            m.var((a, "flow", l), -cap, cap)
+        charging_capacity = math.fsum(
+            -float(n.storage_units.at[s, "p_min_pu"])
+            * float(n.storage_units.at[s, "p_nom"])
+            for s in d["stores"]
+        )
+        generation_budget = math.fsum(nodes[a]["load"].values()) + charging_capacity
+        transfer_budget = generation_budget + math.fsum(
+            float(n.storage_units.at[s, "p_max_pu"])
+            * float(n.storage_units.at[s, "p_nom"])
+            for s in d["stores"]
+        )
+        for component_name in d["lines"]:
+            cap = (
+                float(n.lines.at[component_name, "s_nom"])
+                if nodes[a]["line_status"][component_name]
+                else 0
+            )
+            cap = min(cap, transfer_budget)
+            m.var((a, "flow", component_name), -cap, cap, scale=cap)
         for g in d["gens"]:
             row = n.generators.loc[g]
             cap = float(row.p_nom * row.p_max_pu)
             if g in d["renewable"]:
                 cap *= nodes[a]["renewable_pu"][g]
-            m.var((a, "p", g), 0, cap)
+            cap = min(cap, generation_budget)
+            m.var((a, "p", g), 0, cap, scale=cap)
         for g in d["thermal"]:
             for field in ("u", "start", "stop"):
                 m.var((a, field, g), 0, 1, binary=True)
-        for l in d["loads"]:
-            m.var((a, "shed", l), 0, nodes[a]["load"][l])
+        for component_name in d["loads"]:
+            cap = nodes[a]["load"][component_name]
+            m.var((a, "shed", component_name), 0, cap, scale=cap)
         for s in d["stores"]:
             row = n.storage_units.loc[s]
-            m.var((a, "charge", s), 0, float(-row.p_nom * row.p_min_pu))
-            m.var((a, "discharge", s), 0, float(row.p_nom * row.p_max_pu))
-            m.var((a, "energy", s), 0, float(row.p_nom * row.max_hours))
+            for field, cap in (
+                ("charge", float(-row.p_nom * row.p_min_pu)),
+                ("discharge", float(row.p_nom * row.p_max_pu)),
+                ("energy", float(row.p_nom * row.max_hours)),
+            ):
+                low = (
+                    options["terminal_soc"][s]
+                    if field == "energy" and not kids[a]
+                    else 0
+                )
+                m.var((a, field, s), low, cap, scale=cap)
             m.var((a, "charge_mode", s), 0, 1, binary=True)
         m.var((a, "cost"), high=local_bounds[a], scale=local_bounds[a])
         m.var((a, "risk"), high=risk_bounds[a], scale=risk_bounds[a])
@@ -349,31 +538,36 @@ def optimize_policy_tree(network, tree, options):
             if not kids[a]:
                 m.constraint({energy: 1}, low=options["terminal_soc"][s])
         for cycle in electrical[a][1]:
-            max_log_x = max(math.log(float(n.lines.at[line, "x"])) for line, _ in cycle)
+            max_x = max(Fraction(float(n.lines.at[line, "x"])) for line, _ in cycle)
             terms = {
                 ix[a, "flow", line]: sign
-                * math.exp(math.log(float(n.lines.at[line, "x"])) - max_log_x)
+                * float(Fraction(float(n.lines.at[line, "x"])) / max_x)
                 for line, sign in cycle
             }
-            m.constraint(terms, 0, 0)
+            m.constraint(
+                terms,
+                0,
+                0,
+                physical_tolerance=2e-7 * min(abs(value) for value in terms.values()),
+            )
         for b in d["buses"]:
             terms, demand = {}, 0.0
             for g in d["gens"]:
                 if n.generators.at[g, "bus"] == b:
                     _add(terms, ix[a, "p", g], 1)
-            for l in d["loads"]:
-                if n.loads.at[l, "bus"] == b:
-                    _add(terms, ix[a, "shed", l], 1)
-                    demand += nodes[a]["load"][l]
+            for component_name in d["loads"]:
+                if n.loads.at[component_name, "bus"] == b:
+                    _add(terms, ix[a, "shed", component_name], 1)
+                    demand += nodes[a]["load"][component_name]
             for s in d["stores"]:
                 if n.storage_units.at[s, "bus"] == b:
                     _add(terms, ix[a, "discharge", s], 1)
                     _add(terms, ix[a, "charge", s], -1)
-            for l in d["lines"]:
-                if n.lines.at[l, "bus0"] == b:
-                    _add(terms, ix[a, "flow", l], -1)
-                if n.lines.at[l, "bus1"] == b:
-                    _add(terms, ix[a, "flow", l], 1)
+            for component_name in d["lines"]:
+                if n.lines.at[component_name, "bus0"] == b:
+                    _add(terms, ix[a, "flow", component_name], -1)
+                if n.lines.at[component_name, "bus1"] == b:
+                    _add(terms, ix[a, "flow", component_name], 1)
             m.constraint(terms, demand, demand)
         terms = {ix[a, "cost"]: 1}
         for g in d["gens"]:
@@ -385,8 +579,12 @@ def optimize_policy_tree(network, tree, options):
                     ("stop", "shut_down_cost"),
                 ):
                     _add(terms, ix[a, field, g], -float(n.generators.at[g, column]))
-        for l in d["loads"]:
-            _add(terms, ix[a, "shed", l], -options["shed_cost"][l])
+        for component_name in d["loads"]:
+            _add(
+                terms,
+                ix[a, "shed", component_name],
+                -options["shed_cost"][component_name],
+            )
         for s in d["stores"]:
             fee = options["throughput_cost"][s]
             _add(terms, ix[a, "charge", s], -fee)
@@ -395,7 +593,7 @@ def optimize_policy_tree(network, tree, options):
                 ix[a, "discharge", s],
                 -fee - float(n.storage_units.at[s, "marginal_cost"]),
             )
-        m.constraint(terms, 0, 0)
+        m.constraint(terms, 0, 0, economic=True)
         terms = {ix[a, "risk"]: 1, ix[a, "cost"]: -1}
         if kids[a]:
             if lam == 0 or alpha == 0:
@@ -414,19 +612,48 @@ def optimize_policy_tree(network, tree, options):
                             ix[a, "eta"]: 1,
                         },
                         low=0,
+                        economic=True,
                     )
-            m.constraint(terms, low=0)
+            m.constraint(terms, low=0, economic=True)
         else:
-            m.constraint(terms, 0, 0)
-    result = m.solve(ix[root, "risk"])
-    if (
-        result.status == 2
-        and "infeasible" in result.message.lower()
-        and "model error" not in result.message.lower()
-    ):
-        return {"status": "infeasible"}
-    if result.status != 0:
-        return {"status": "limit" if result.status == 1 else "error"}
+            m.constraint(terms, 0, 0, economic=True)
+    result = m.solve(ix[root, "risk"], time_limit=75 - (time.monotonic() - started))
+    if not m.physical_residuals_valid(result.x):
+        # Economic scaling cannot be used as evidence of physical infeasibility.
+        result = m.solve(
+            ix[root, "risk"],
+            feasibility=True,
+            time_limit=75 - (time.monotonic() - started),
+        )
+        if result.status == 2 and "infeasible" in result.message.lower():
+            return {"status": "infeasible"}
+        if not m.physical_residuals_valid(result.x):
+            return {"status": "limit" if result.status == 1 else "error"}
+    proved = False
+    for _ in range(4):
+        if time.monotonic() - started >= 75:
+            return {"status": "limit"}
+        incumbent = _tighten_economic_bounds(m, result.x, n, d, options)
+        if incumbent is None or incumbent < 0:
+            return {"status": "error"}
+        result = m.solve(ix[root, "risk"], time_limit=75 - (time.monotonic() - started))
+        if result.status != 0 or not m.physical_residuals_valid(result.x):
+            return {"status": "limit" if result.status == 1 else "error"}
+        _, actual_risks = _actual_risks(m, result.x, n, d, options)
+        actual = actual_risks[root]
+        dual = getattr(result, "mip_dual_bound", None)
+        lower_bound = (
+            result.fun if dual is None else float(dual) * m.scales[ix[root, "risk"]]
+        )
+        tolerance = 2e-6 + 2e-7 * abs(actual)
+        if (
+            abs(actual - result.fun) <= tolerance
+            and abs(actual - lower_bound) <= tolerance
+        ):
+            proved = True
+            break
+    if not proved:
+        return {"status": "error"}
     x, output, carry = result.x, {}, {}
 
     def val(a, field, name):
@@ -458,6 +685,18 @@ def optimize_policy_tree(network, tree, options):
         ):
             record[field] = {key: val(a, field, key) for key in members}
         record["theta"] = _public_angles(n, d, electrical[a][0], record["flow"])
+        for line in d["lines"]:
+            if nodes[a]["line_status"][line]:
+                row = n.lines.loc[line]
+                predicted = (
+                    float(n.buses.at[row.bus0, "v_nom"]) ** 2
+                    / float(row.x)
+                    * (record["theta"][row.bus0] - record["theta"][row.bus1])
+                )
+                if not math.isclose(
+                    record["flow"][line], predicted, abs_tol=2e-7, rel_tol=2e-8
+                ):
+                    return {"status": "error"}
         cost = sum(
             record["p"][g] * float(n.generators.at[g, "marginal_cost"])
             for g in d["gens"]
@@ -471,7 +710,10 @@ def optimize_policy_tree(network, tree, options):
                     ("stop", "shut_down_cost"),
                 )
             )
-        cost += sum(record["shed"][l] * options["shed_cost"][l] for l in d["loads"])
+        cost += sum(
+            record["shed"][component_name] * options["shed_cost"][component_name]
+            for component_name in d["loads"]
+        )
         cost += sum(
             options["throughput_cost"][s]
             * (record["charge"][s] + record["discharge"][s])

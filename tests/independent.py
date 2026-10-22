@@ -12,6 +12,69 @@ import numpy as np
 from scipy.optimize import linprog
 
 
+def dc_transfer_factors(buses, lines, node):
+    """Exact reduced nodal Laplacian, independent of the reference cycle model.
+
+    Each column injects one MW at a bus and withdraws it at its island gauge.
+    Rational elimination avoids deleting a stiff-line coefficient. Voltage
+    cancels because every connected line has the same voltage base.
+    """
+    graph = {b: set() for b in buses}
+    active = {key: row for key, row in lines.items() if node["line_status"][key]}
+    for row in active.values():
+        graph[row["bus0"]].add(row["bus1"])
+        graph[row["bus1"]].add(row["bus0"])
+    factors = {key: {} for key in active}
+    unseen = set(buses)
+    while unseen:
+        gauge = min(unseen)
+        component, stack = {gauge}, [gauge]
+        unseen.remove(gauge)
+        while stack:
+            for neighbor in graph[stack.pop()]:
+                if neighbor in unseen:
+                    unseen.remove(neighbor)
+                    component.add(neighbor)
+                    stack.append(neighbor)
+        free = sorted(component - {gauge})
+        size = len(free)
+        index = {b: i for i, b in enumerate(free)}
+        matrix = [[Fraction(0) for _ in range(2 * size)] for _ in free]
+        for i in range(size):
+            matrix[i][size + i] = Fraction(1)
+        for row in active.values():
+            if row["bus0"] not in component:
+                continue
+            conductance = 1 / Fraction(float(row["x"]))
+            for first, second in (
+                (row["bus0"], row["bus1"]),
+                (row["bus1"], row["bus0"]),
+            ):
+                if first != gauge:
+                    i = index[first]
+                    matrix[i][i] += conductance
+                    if second != gauge:
+                        matrix[i][index[second]] -= conductance
+        for col in range(size):
+            pivot = next(i for i in range(col, size) if matrix[i][col])
+            matrix[col], matrix[pivot] = matrix[pivot], matrix[col]
+            divisor = matrix[col][col]
+            matrix[col] = [value / divisor for value in matrix[col]]
+            for i in range(size):
+                if i != col and matrix[i][col]:
+                    factor = matrix[i][col]
+                    matrix[i] = [x - factor * y for x, y in zip(matrix[i], matrix[col])]
+        for key, row in active.items():
+            if row["bus0"] not in component:
+                continue
+            for b in free:
+                col = size + index[b]
+                first = matrix[index[row["bus0"]]][col] if row["bus0"] != gauge else 0
+                second = matrix[index[row["bus1"]]][col] if row["bus1"] != gauge else 0
+                factors[key][b] = float((first - second) / Fraction(float(row["x"])))
+    return factors
+
+
 def risk_weights(probabilities, alpha, lam):
     q = np.array(probabilities, dtype=float)
     if len(q) == 1 or alpha == 0 or lam == 0:
@@ -38,11 +101,161 @@ def risk_weights(probabilities, alpha, lam):
     return vertices
 
 
+def bounded_risk_lp(
+    names,
+    bounds,
+    equations,
+    rhs,
+    limits,
+    ub,
+    local_forms,
+    nodes,
+    order,
+    kids,
+    options,
+    upper_risk,
+):
+    """Enumerated-policy LP with an incumbent-based economic unit system.
+
+    This uses nodal transfer factors and risk-envelope vertices, not the
+    reference MILP, event binaries, cycle rows, or eta/excess representation.
+    A solver objective is checked against actual actions before it is trusted.
+    """
+    size, root = len(bounds), order[0]
+    if any(lo is not None and hi is not None and lo > hi for lo, hi in bounds):
+        return math.inf
+    equality, inequality = np.array(equations), np.array(limits)
+    base_rhs, base_ub = np.array(rhs, dtype=float), np.array(ub, dtype=float)
+    vertices = {
+        a: risk_weights(
+            [nodes[c]["probability"] for c in kids[a]],
+            options["alpha"],
+            options["risk_weight"],
+        )
+        if kids[a]
+        else [[]]
+        for a in order
+    }
+    current = list(bounds)
+    risk_units = dict(upper_risk)
+    for attempt in range(5):
+        scales = np.ones(size)
+        offsets = np.array([lo if lo is not None else 0.0 for lo, _ in current])
+        for key, i in names.items():
+            lo, hi = current[i]
+            if key[1] == "V":
+                scales[i] = risk_units[key[0]] if risk_units[key[0]] > 0 else 1
+            elif lo is not None and hi is not None and max(abs(lo), abs(hi)) > 0:
+                scales[i] = max(abs(lo), abs(hi))
+            if lo is not None and hi is not None and hi > lo:
+                scales[i] = min(scales[i], hi - lo)
+        equality_rhs, inequality_rhs = base_rhs.copy(), base_ub.copy()
+        eqmat, ineqmat = equality.copy(), inequality.copy()
+        fixed = [i for i, (lo, hi) in enumerate(current) if lo is not None and lo == hi]
+        equality_rhs -= np.array(
+            [
+                math.fsum(value * offset for value, offset in zip(row, offsets))
+                for row in eqmat
+            ]
+        )
+        inequality_rhs -= np.array(
+            [
+                math.fsum(value * offset for value, offset in zip(row, offsets))
+                for row in ineqmat
+            ]
+        )
+        if fixed:
+            eqmat[:, fixed] = 0
+            ineqmat[:, fixed] = 0
+        eqmat *= scales
+        ineqmat *= scales
+        eq_scale = np.maximum(np.max(np.abs(eqmat), axis=1), np.abs(equality_rhs))
+        ineq_scale = np.maximum(np.max(np.abs(ineqmat), axis=1), np.abs(inequality_rhs))
+        eq_scale[eq_scale == 0] = 1
+        ineq_scale[ineq_scale == 0] = 1
+        target = np.zeros(size)
+        target[names[root, "V"]] = 1
+        result = linprog(
+            target,
+            A_ub=ineqmat / ineq_scale[:, None],
+            b_ub=inequality_rhs / ineq_scale,
+            A_eq=eqmat / eq_scale[:, None],
+            b_eq=equality_rhs / eq_scale,
+            bounds=[
+                (
+                    (lo - offsets[i]) / scales[i] if lo is not None else None,
+                    (hi - offsets[i]) / scales[i] if hi is not None else None,
+                )
+                for i, (lo, hi) in enumerate(current)
+            ],
+            method="highs",
+        )
+        if not result.success:
+            if (
+                result.status == 2
+                and "infeasible" in result.message.lower()
+                and "model error" not in result.message.lower()
+            ):
+                return math.inf
+            raise RuntimeError(
+                "Independent LP did not establish a result: " + result.message
+            )
+        point = result.x * scales + offsets
+        risk = {}
+        for a in reversed(order):
+            local, constant = local_forms[a]
+            cost = constant + math.fsum(
+                coefficient * point[names[key]] for key, coefficient in local.items()
+            )
+            risk[a] = cost + max(
+                math.fsum(w * risk[c] for w, c in zip(vertex, kids[a]))
+                for vertex in vertices[a]
+            )
+        actual, modeled = risk[root], result.fun * scales[names[root, "V"]]
+        if attempt and abs(actual - modeled) <= 2e-6 + 2e-7 * abs(actual):
+            return float(actual)
+        incumbent = Fraction(float(actual + max(1e-7, 64 * math.ulp(actual))))
+        reach = {}
+        for a in order:
+            parent = nodes[a]["parent"]
+            if parent is None:
+                reach[a] = Fraction(1)
+            else:
+                total = sum(
+                    Fraction(float(nodes[c]["probability"])) for c in kids[parent]
+                )
+                reach[a] = (
+                    reach[parent]
+                    * Fraction(float(nodes[a]["probability"]))
+                    / max(1, total)
+                )
+            budget = incumbent / reach[a]
+            cap = float(min(Fraction(float(upper_risk[a])), budget))
+            risk_units[a] = cap
+            current[names[a, "V"]] = (0, cap)
+            local, _ = local_forms[a]
+            for key, coefficient in local.items():
+                if coefficient > 0:
+                    i = names[key]
+                    lo, hi = current[i]
+                    current[i] = (
+                        lo,
+                        float(
+                            min(
+                                Fraction(float(hi)),
+                                budget / Fraction(float(coefficient)),
+                            )
+                        ),
+                    )
+    raise RuntimeError(
+        "Independent LP objective disagrees with its actual physical policy"
+    )
+
+
 def exhaustive_optimum(case):
     components = case["network"]
     nodes = {n["id"]: n for n in case["tree"]}
     order = sorted(nodes, key=lambda key: (nodes[key]["stage"], key))
-    root = order[0]
     kids = {a: [b for b in order if nodes[b]["parent"] == a] for a in order}
     rows = {
         key: {r["name"]: r for r in components.get(key, [])}
@@ -58,6 +271,7 @@ def exhaustive_optimum(case):
         parent = nodes[a]["parent"]
         hist[a] = (hist[parent] if parent is not None else []) + [a]
     options = case["options"]
+    transfer = {a: dc_transfer_factors(buses, lines, nodes[a]) for a in order}
     best = np.inf
     feasible_schedules = 0
     for bits in product((0, 1), repeat=len(decisions)):
@@ -94,6 +308,9 @@ def exhaustive_optimum(case):
                 bounds.append((lo, hi))
 
             for a in order:
+                generation_budget = math.fsum(nodes[a]["load"].values()) + math.fsum(
+                    -r.get("p_min_pu", -1) * r["p_nom"] for r in stores.values()
+                )
                 for g, r in gens.items():
                     if g in thermal:
                         lo = r.get("p_min_pu", 0) * r["p_nom"] * u[a, g]
@@ -105,7 +322,7 @@ def exhaustive_optimum(case):
                             * r["p_nom"]
                             * nodes[a]["renewable_pu"][g]
                         )
-                    variable((a, "p", g), lo, hi)
+                    variable((a, "p", g), lo, min(hi, generation_budget))
                 for s, r in stores.items():
                     mode = storage_mode[a, s]
                     variable(
@@ -126,13 +343,16 @@ def exhaustive_optimum(case):
                     )
                 for component_name, r in lines.items():
                     cap = r["s_nom"] if nodes[a]["line_status"][component_name] else 0
+                    transfer_budget = generation_budget + math.fsum(
+                        row.get("p_max_pu", 1) * row["p_nom"] for row in stores.values()
+                    )
+                    cap = min(cap, transfer_budget)
                     variable((a, "f", component_name), -cap, cap)
-                for b in buses:
-                    variable((a, "angle", b), None, None)
                 variable((a, "V"))
             size = len(bounds)
             equations, rhs, limits, ub = [], [], [], []
             local_upper = {}
+            local_forms = {}
 
             def eq(terms, value):
                 row = np.zeros(size)
@@ -182,39 +402,23 @@ def exhaustive_optimum(case):
                     else:
                         terms[parent, "e", s] = -decay
                         eq(terms, 0)
-                # DC flow and one gauge per actual connected component.
-                graph = {b: set() for b in buses}
-                logs = sorted(
-                    math.log(r["x"])
-                    for component_name, r in lines.items()
-                    if nodes[a]["line_status"][component_name]
-                )
-                log_reference = logs[len(logs) // 2] if logs else 0.0
-                for component_name, r in lines.items():
-                    if nodes[a]["line_status"][component_name]:
-                        # Independent resistance/potential form: v^2 theta/x_ref.
-                        resistance = math.exp(math.log(r["x"]) - log_reference)
-                        eq(
-                            {
-                                (a, "f", component_name): resistance,
-                                (a, "angle", r["bus0"]): -1,
-                                (a, "angle", r["bus1"]): 1,
-                            },
-                            0,
-                        )
-                        graph[r["bus0"]].add(r["bus1"])
-                        graph[r["bus1"]].add(r["bus0"])
-                unseen = set(buses)
-                while unseen:
-                    reference = min(unseen)
-                    todo = [reference]
-                    unseen.remove(reference)
-                    while todo:
-                        for b in graph[todo.pop()]:
-                            if b in unseen:
-                                unseen.remove(b)
-                                todo.append(b)
-                    eq({(a, "angle", reference): 1}, 0)
+                # Dense rational nodal elimination, not a cycle/angle LP.
+                for component_name, weights in transfer[a].items():
+                    terms = {(a, "f", component_name): 1}
+                    demand = 0.0
+                    for b, weight in weights.items():
+                        for g, r in gens.items():
+                            if r["bus"] == b:
+                                terms[a, "p", g] = -weight
+                        for s, r in stores.items():
+                            if r["bus"] == b:
+                                terms[a, "d", s] = -weight
+                                terms[a, "c", s] = weight
+                        for load, r in loads.items():
+                            if r["bus"] == b:
+                                terms[a, "shed", load] = -weight
+                                demand -= weight * nodes[a]["load"][load]
+                    eq(terms, demand)
                 for b in buses:
                     terms, demand = {}, 0
                     for g, r in gens.items():
@@ -258,6 +462,7 @@ def exhaustive_optimum(case):
                     coefficient * bounds[names[key]][1]
                     for key, coefficient in local.items()
                 )
+                local_forms[a] = (dict(local), constant)
                 weights = (
                     risk_weights(
                         [nodes[c]["probability"] for c in kids[a]],
@@ -290,57 +495,19 @@ def exhaustive_optimum(case):
                     )
                     for vertex in vertices
                 )
-            scales = np.ones(size)
-            for a in order:
-                scales[names[a, "V"]] = upper_risk[a] if upper_risk[a] > 0 else 1.0
-            equality = np.array(equations)
-            inequality = np.array(limits)
-            equality_rhs = np.array(rhs, dtype=float)
-            inequality_rhs = np.array(ub, dtype=float)
-            fixed = [
-                i for i, (lo, hi) in enumerate(bounds) if lo is not None and lo == hi
-            ]
-            if fixed:
-                values = np.array([bounds[i][0] for i in fixed])
-                equality_rhs -= equality[:, fixed] @ values
-                inequality_rhs -= inequality[:, fixed] @ values
-                equality[:, fixed] = 0
-                inequality[:, fixed] = 0
-            equality *= scales
-            inequality *= scales
-            eq_scale = np.maximum(
-                1, np.maximum(np.max(np.abs(equality), axis=1), np.abs(equality_rhs))
+            value = bounded_risk_lp(
+                names,
+                bounds,
+                equations,
+                rhs,
+                limits,
+                ub,
+                local_forms,
+                nodes,
+                order,
+                kids,
+                options,
+                upper_risk,
             )
-            ineq_scale = np.maximum(
-                1,
-                np.maximum(np.max(np.abs(inequality), axis=1), np.abs(inequality_rhs)),
-            )
-            target = np.zeros(size)
-            target[names[root, "V"]] = 1
-            scaled_bounds = [
-                (
-                    lo / scales[i] if lo is not None else None,
-                    hi / scales[i] if hi is not None else None,
-                )
-                for i, (lo, hi) in enumerate(bounds)
-            ]
-            result = linprog(
-                target,
-                A_ub=inequality / ineq_scale[:, None],
-                b_ub=inequality_rhs / ineq_scale,
-                A_eq=equality / eq_scale[:, None],
-                b_eq=equality_rhs / eq_scale,
-                bounds=scaled_bounds,
-                method="highs",
-            )
-            if result.success:
-                best = min(best, result.fun * scales[names[root, "V"]])
-            elif not (
-                result.status == 2
-                and "infeasible" in result.message.lower()
-                and "model error" not in result.message.lower()
-            ):
-                raise RuntimeError(
-                    "Independent LP did not establish infeasibility: " + result.message
-                )
+            best = min(best, value)
     return float(best), feasible_schedules

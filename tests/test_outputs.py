@@ -6,12 +6,18 @@ LPs; raw returned policies are checked without importing candidate code.
 """
 
 import copy
+import json
 import math
 import pytest
 from candidate_proxy import candidate
 from independent import exhaustive_optimum
 from numeric_domain import independent_angle_budgets
 from fractions import Fraction
+
+
+def run_candidate(case):
+    """题面：所有返回值是普通 JSON 数、字符串、数组或对象，不包含 NaN/Infinity。"""
+    return json.loads(json.dumps(candidate.run(case), allow_nan=False))
 
 
 def close(actual, expected, path="value"):
@@ -360,7 +366,7 @@ def validate(case, result, optimum=None):
 
 def checked(case):
     optimum, _ = exhaustive_optimum(case)
-    answer = candidate.run(case)
+    answer = run_candidate(case)
     if math.isfinite(optimum):
         validate(case, answer)
     return answer, optimum
@@ -380,7 +386,7 @@ def test_native_deterministic_entry_still_works():
         },
         "load": {"l": 2},
     }
-    answer = candidate.run(case)
+    answer = run_candidate(case)
     assert answer["status"] == "ok"
     assert answer["condition"] == "optimal"
     close(answer["objective"], 6)
@@ -430,7 +436,7 @@ def test_advance_commitment_cannot_use_the_next_observation():
     # A single prior commitment therefore leaves both children offline.
     close(optimum, 422.8)
     assert schedules == 2
-    validate(case, candidate.run(case), optimum)
+    validate(case, run_candidate(case), optimum)
 
 
 @pytest.mark.parametrize("weight,alpha", [(0, 0.8), (0.65, 0.73), (1, 0.5), (0.8, 0)])
@@ -489,13 +495,13 @@ def test_node_and_component_order_do_not_change_policy_problem():
     Reversing component and node arrays retains the same parent-indexed feasible set and optimum, allowing different optimal actions.
     """
     case = branched(storage=True)
-    baseline = candidate.run(case)
+    baseline = run_candidate(case)
     validate(case, baseline)
     shuffled = copy.deepcopy(case)
     shuffled["tree"] = list(reversed(shuffled["tree"]))
     for records in shuffled["network"].values():
         records.reverse()
-    result = candidate.run(shuffled)
+    result = run_candidate(shuffled)
     validate(shuffled, result)
     assert result["root_objective"] == pytest.approx(
         baseline["root_objective"], abs=2e-5, rel=2e-6
@@ -604,7 +610,7 @@ def test_twenty_five_node_supported_tree():
         case["tree"].append(node(key, "root", 1, 1 / 6, la=1, lb=2, pv=1))
         for k in range(3):
             case["tree"].append(node(f"{key}-{k}", key, 2, 1 / 3, la=1, lb=2, pv=1))
-    answer = candidate.run(case)
+    answer = run_candidate(case)
     validate(case, answer)
     assert answer["root_objective"] == pytest.approx(18, abs=2e-5, rel=2e-6), (
         f"Three one-hour demands of 3 MW at cost 2 require exact objective18, got {answer['root_objective']!r}"
@@ -621,7 +627,7 @@ def test_invalid_contract_inputs_raise_value_error(kind):
     """
     case = invalid_case(kind)
     with pytest.raises(ValueError):
-        candidate.run(case)
+        run_candidate(case)
 
 
 def invalid_case(kind):
@@ -702,7 +708,7 @@ def test_all_strictly_positive_representable_probabilities_are_valid(probability
     physically represented even when its probability is a subnormal float.
     """
     case = analytic_network_case(probability=probability)
-    result = candidate.run(case)
+    result = run_candidate(case)
     validate(case, result, 2.0)
     assert set(result["node_policy"]) == {"root", "rare", "usual"}, (
         "A positive-probability branch must not disappear"
@@ -721,7 +727,7 @@ def test_positive_reactance_has_no_hidden_lower_floor():
     nonnegative costs give the matching one-unit lower bound independently.
     """
     case = analytic_network_case(reactance=1e-9)
-    result = candidate.run(case)
+    result = run_candidate(case)
     validate(case, result)
     assert result["root_objective"] == pytest.approx(1.0, abs=2e-5, rel=2e-6), (
         f"Analytic one-unit supply optimum is1, got {result['root_objective']!r}"
@@ -738,7 +744,7 @@ def test_finite_large_dc_coefficient_preserves_tiny_physical_angle():
     solver matrix errors; a tiny but necessary angle cannot be rounded to zero.
     """
     case = analytic_network_case(reactance=1e-6, voltage=1e5)
-    result = candidate.run(case)
+    result = run_candidate(case)
     validate(case, result)
     assert result["root_objective"] == pytest.approx(1.0, abs=2e-5, rel=2e-6), (
         f"Analytic one-unit supply optimum is1, got {result['root_objective']!r}"
@@ -769,7 +775,7 @@ def test_tiny_probability_keeps_a_material_tail_risk_contribution():
     for item in case["tree"]:
         item["renewable_pu"] = {}
         item["load"]["L"] = 1.0 if item["id"] == "rare" else 0.0
-    result = candidate.run(case)
+    result = run_candidate(case)
     validate(case, result, 0.5)
     assert (
         result["node_policy"]["rare"]["u"]["G"]
@@ -794,7 +800,7 @@ def test_mixed_reactances_preserve_a_required_transfer():
         {"name": "BC", "bus0": "B", "bus1": "C", "x": 1e6, "s_nom": 2.0}
     )
     case["tree"][0]["line_status"]["BC"] = True
-    result = candidate.run(case)
+    result = run_candidate(case)
     validate(case, result)
     assert result["root_objective"] == pytest.approx(1.0, abs=2e-5, rel=2e-6), (
         f"The1MW source and two-line transfer attain matching lower bound1, got {result['root_objective']!r}"
@@ -887,7 +893,7 @@ def test_public_numeric_interval_endpoints_are_inclusive(field, value):
     assert all(error <= Fraction(1, 5_000_000) for _, _, error in budgets), (
         f"Endpoint fixture {field}={value!r} must satisfy the independently computed public angle budget"
     )
-    result = candidate.run(case)
+    result = run_candidate(case)
     validate(case, result)
     assert result["root_objective"] == pytest.approx(0.0, abs=2e-5, rel=2e-6), (
         f"{field}={value!r}: admissible zero-demand idle certificate has exact cost0"
@@ -910,7 +916,7 @@ def test_first_values_outside_public_numeric_intervals_raise_value_error(field, 
     """
     case = numeric_interval_case(field, value)
     with pytest.raises(ValueError):
-        candidate.run(case)
+        run_candidate(case)
 
 
 def excessive_rounding_budget_case():
@@ -944,7 +950,7 @@ def test_public_rounding_budget_checks_every_actual_topology(bad_node):
         for node_id, _, error in budgets
     ), f"Independent all-pairs rational budget must reject topology at {bad_node}"
     with pytest.raises(ValueError):
-        candidate.run(case)
+        run_candidate(case)
 
 
 def test_old_unrepresentable_angle_is_explicitly_outside_numeric_v2():
@@ -960,7 +966,7 @@ def test_old_unrepresentable_angle_is_explicitly_outside_numeric_v2():
         "Exact independent rounding-flow bound for the old impossible example is2MW"
     )
     with pytest.raises(ValueError):
-        candidate.run(case)
+        run_candidate(case)
 
 
 @pytest.mark.parametrize("mode", ["outage", "zero-capacity"])
@@ -977,7 +983,7 @@ def test_rounding_budget_respects_outages_and_zero_capacity(mode):
     assert all(error <= Fraction(1, 5_000_000) for _, _, error in budgets), (
         f"{mode}: independent rational topology budget unexpectedly rejects the physical limit"
     )
-    result = candidate.run(case)
+    result = run_candidate(case)
     validate(case, result)
     assert result["root_objective"] == pytest.approx(0.0, abs=2e-5, rel=2e-6), (
         f"{mode}: zero-demand idle optimum must remain0"
@@ -989,3 +995,182 @@ def apply_zero_or_outage(case, mode):
         case["tree"][0]["line_status"]["AB"] = False
     else:
         case["network"]["lines"][0]["s_nom"] = 0.0
+
+
+def mixed_cost_scale_case():
+    case = analytic_network_case()
+    case["network"]["generators"] = [
+        {"name": name, "bus": "A", "p_nom": 1.0,
+         "committable": False, "marginal_cost": cost}
+        for name, cost in (("G0", 2.0), ("G1", 1.0), ("G2", 1e13))
+    ]
+    case["tree"][0]["renewable_pu"] = {"G0": 1.0, "G1": 1.0, "G2": 1.0}
+    return case
+
+
+def test_original_single_bus_mixed_cost_counterexample_has_optimum_one():
+    """“最小化 `V_root`。”
+
+    The original frozen counterexample is preserved: one bus, one hour,
+    demand1, generator prices2/1/1e13 and shedding price10. G1=1 attains1;
+    every supply price is at least1, so the exact optimum is1, independently
+    of the reference implementation and the enumerated LP.
+    """
+    case = mixed_cost_scale_case()
+    case["options"].update(risk_weight=0.0, alpha=0.0)
+    answer = run_candidate(case)
+    validate(case, answer, 1.0)
+    assert answer["root_objective"] == pytest.approx(1.0, abs=2e-5, rel=2e-6)
+    independent, _ = exhaustive_optimum(case)
+    assert independent == pytest.approx(1.0, abs=2e-5, rel=2e-6)
+
+
+@pytest.mark.parametrize("weight,alpha", [(0.0, 0.0), (0.65, 0.73), (1.0, 0.5)])
+def test_unused_expensive_capacity_cannot_erase_material_merit_order(weight, alpha):
+    """“最小化 `V_root`。”
+
+    At each hour the primal G1=1 attains one; every available supply/shedding
+    price is at least one, proving the matching lower bound without an LP.
+    Identical child costs make the exact two-hour risk objective two for all
+    three declared risk regimes, despite an unused 1e13-price generator.
+    """
+    case = mixed_cost_scale_case()
+    case["options"].update(risk_weight=weight, alpha=alpha)
+    root = case["tree"][0]
+    for name, q in (("a", 0.4), ("b", 0.6)):
+        child = copy.deepcopy(root)
+        child.update(id=name, parent="root", stage=1, probability=q)
+        case["tree"].append(child)
+    answer = run_candidate(case)
+    validate(case, answer, 2.0)
+    assert answer["root_objective"] == pytest.approx(2.0, abs=2e-5, rel=2e-6)
+    independent, _ = exhaustive_optimum(case)
+    assert independent == pytest.approx(2.0, abs=2e-5, rel=2e-6), (
+        f"Risk-envelope LP must match the analytic primal/dual bound2, got {independent!r}"
+    )
+
+
+def test_tiny_load_with_material_cost_keeps_original_unit_balance():
+    """“每母线：发电 + 放电 - 充电 + 削负荷 - 需求 = 向外线路净流出。”
+
+    Demand1e-12 at generation price5e12 versus shedding price1e13 has exact
+    optimum5. A zero primal residual in rescaled units cannot replace the
+    original-unit balance or erase its material economic consequence.
+    """
+    case = analytic_network_case()
+    case["network"]["generators"][0]["marginal_cost"] = 5e12
+    case["tree"][0]["load"]["L"] = 1e-12
+    case["options"]["shed_cost"]["L"] = 1e13
+    result = run_candidate(case)
+    validate(case, result, 5.0)
+    assert result["node_policy"]["root"]["p"]["G"] * 1e12 == pytest.approx(
+        1.0, abs=2e-5, rel=2e-6)
+    independent, _ = exhaustive_optimum(case)
+    assert independent == pytest.approx(5.0, abs=2e-5, rel=2e-6)
+
+
+def test_mixed_cost_scale_respects_charge_and_terminal_energy():
+    """“每个叶端独立满足最低终端储备。”
+
+    The sole one-hour leaf must supply demand1 and charge1. G1 can supply
+    exactly two at price1, while the unused unit costs1e13: primal and total
+    energy lower bound both give objective2, with terminal energy exactly1.
+    """
+    case = mixed_cost_scale_case()
+    for gen in case["network"]["generators"]:
+        gen["p_nom"] = 2.0
+    case["network"]["storage_units"] = [
+        {"name": "S", "bus": "A", "p_nom": 1.0, "max_hours": 1.0,
+         "efficiency_store": 1.0, "efficiency_dispatch": 1.0,
+         "state_of_charge_initial": 0.0}
+    ]
+    case["options"]["terminal_soc"] = {"S": 1.0}
+    case["options"]["throughput_cost"] = {"S": 0.0}
+    result = run_candidate(case)
+    validate(case, result, 2.0)
+    assert result["node_policy"]["root"]["charge"]["S"] == pytest.approx(1, abs=2e-5, rel=2e-6)
+    independent, _ = exhaustive_optimum(case)
+    assert independent == pytest.approx(2.0, abs=2e-5, rel=2e-6)
+
+
+def test_stiff_parallel_mesh_keeps_tiny_transfer_economically_material():
+    """“f = (v_nom(bus0)**2/x)*(theta_bus0-theta_bus1), |f| <= s_nom”
+
+    Parallel reactances1e-12/1e6 split flow in ratio1e18. The stiff line cap
+    2e-13 admits total2e-13*(1+1e-18), leaving an analytic shedding cost8.
+    Nodal rational transfer factors independently recover the same bound.
+    """
+    case = analytic_network_case(reactance=1e-12)
+    case["network"]["lines"][0]["s_nom"] = 2e-13
+    case["network"]["lines"].append(
+        {"name": "parallel", "bus0": "A", "bus1": "B", "x": 1e6, "s_nom": 1e6})
+    case["tree"][0]["line_status"]["parallel"] = True
+    case["tree"][0]["load"]["L"] = 1e-12
+    case["options"]["shed_cost"]["L"] = 1e13
+    assert all(error <= Fraction(1, 5_000_000) for _, _, error in independent_angle_budgets(case))
+    answer = run_candidate(case)
+    validate(case, answer, 8.0)
+    assert answer["node_policy"]["root"]["flow"]["AB"] * 1e13 == pytest.approx(2, abs=2e-5, rel=2e-6)
+    independent, _ = exhaustive_optimum(case)
+    assert independent == pytest.approx(8.0, abs=2e-5, rel=2e-6)
+
+
+def test_pure_cvar_accepts_a_root_optimal_non_tail_policy():
+    """“特别在 λ=1 时不额外要求非尾部分支各自条件最优。”
+
+    A high branch needs10 but free generation is capped at1, proving root
+    CVaR9. Shedding1 on the low branch stays outside the worst half mass and
+    is equally root-optimal; the validator must accept that returned policy.
+    """
+    case = analytic_network_case(probability=0.5)
+    case["options"].update(risk_weight=1.0, alpha=0.5)
+    case["options"]["shed_cost"]["L"] = 1.0
+    case["network"]["generators"][0].update(p_nom=1.0, marginal_cost=0.0)
+    case["tree"][0]["load"]["L"] = 0.0
+    case["tree"][1]["load"]["L"] = 10.0
+    answer = run_candidate(case)
+    validate(case, answer, 9.0)
+    alternate = copy.deepcopy(answer)
+    low = alternate["node_policy"]["usual"]
+    low["p"]["G"], low["shed"]["L"] = 0.0, 1.0
+    low["local_cost"], low["risk_to_go"] = 1.0, 1.0
+    alternate["expected_cost"] = 5.0
+    validate(case, alternate, 9.0)
+    assert alternate["root_objective"] == pytest.approx(9.0, abs=2e-5, rel=2e-6)
+
+
+@pytest.mark.parametrize("increment", [1.0, 0.75])
+def test_large_soc_origin_cannot_erase_a_material_charging_requirement(increment):
+    """“e = (1-standing_loss)*e_prev + efficiency_store*charge - discharge/efficiency_dispatch”
+
+    SOC starts at1e10-1; terminal energy is higher by exactly1 or0.75.
+    With no discharge and binary-exact efficiency2^-19, charge and generation
+    are bounded below by increment*2^19, attaining that exact cost at price1.
+    This checks a material increment on a large origin, including a reserve
+    strictly inside the capacity boundary, independently of either LP solver.
+    """
+    initial = 1e10 - 1
+    case = {
+        "network": {
+            "buses": [{"name": "A", "v_nom": 10}],
+            "generators": [{"name": "G", "bus": "A", "p_nom": 1e6, "marginal_cost": 1}],
+            "storage_units": [{"name": "S", "bus": "A", "p_nom": 1e6,
+                "max_hours": 1e4, "efficiency_store": 2**-19,
+                "efficiency_dispatch": 1.0, "p_max_pu": 0.0,
+                "state_of_charge_initial": initial}],
+        },
+        "tree": [{"id": "r", "parent": None, "stage": 0, "probability": 1,
+                  "load": {}, "renewable_pu": {"G": 1}, "line_status": {}}],
+        "options": {"risk_weight": 0, "alpha": 0, "initial": {},
+                    "terminal_soc": {"S": initial + increment}, "shed_cost": {},
+                    "throughput_cost": {"S": 0}},
+    }
+    exact_cost = increment * 2**19
+    answer = run_candidate(case)
+    validate(case, answer, exact_cost)
+    assert answer["node_policy"]["r"]["energy"]["S"] - initial == pytest.approx(
+        increment, abs=2e-5, rel=2e-6)
+    assert answer["node_policy"]["r"]["charge"]["S"] == pytest.approx(
+        exact_cost, abs=2e-5, rel=2e-6)
+    independent, _ = exhaustive_optimum(case)
+    assert independent == pytest.approx(exact_cost, abs=2e-5, rel=2e-6)
