@@ -106,9 +106,9 @@
     "test_outputs.py::test_active_zero_capacity_bridge_still_couples_island_angles"
   ],
   "test_files_sha256": {
-    "candidate_proxy.py": "aa2f94e680bef214ab46319daab65f840a995db402b9a159212d04d6762f4fe4",
+    "candidate_proxy.py": "8c89d5badd882b00336b011f352017b2d8ef1829752dfb6f47b07b91d53eab23",
     "candidate_sandbox.py": "75ab2164351d619835da5147be0c49457e54a197c2c26d4c49505ddb2f310386",
-    "candidate_worker.py": "ab64e4a15404fe28877d68c57f2d54f93e4e01a114715131501bc73d7adfdbb8",
+    "candidate_worker.py": "8b15aeff2b8f25ae0ed724532e146ef7f5e2601f3baa346cc791bdf592949f3f",
     "grade.py": "44d8e4faf2a79ae1272aeb90cddea67ea75b540680ceec85bae991eadccc79f7",
     "independent.py": "db3a846a39f9cc6a2ad4e6ca97a51478bb4e12e77882a4c7a521df1ecab1290f",
     "numeric_domain.py": "3da7f8d200a73c1e9e9ec6201784b2daaa262c27b22613c44ea8c6d41dc0f325",

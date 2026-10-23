@@ -19,6 +19,57 @@ HERE = Path(__file__).resolve().parent
 PROCESSES = []
 
 
+class RemoteCandidateError(Exception):
+    """Unknown candidate error or invalid protocol, outside accepted families."""
+
+
+def _build_exception_types():
+    """Restore supported memberships without importing candidate-defined classes."""
+    families = (NotImplementedError, ValueError, TypeError, RuntimeError)
+    result = {0: RemoteCandidateError}
+    for mask in range(1, 16):
+        if mask & 1 and not mask & 8:
+            continue  # NotImplementedError is also a RuntimeError.
+        bases = tuple(
+            base
+            for index, base in enumerate(families)
+            if mask & (1 << index) and not (index == 3 and mask & 1)
+        )
+        result[mask] = (
+            bases[0]
+            if len(bases) == 1
+            else type("RemoteBuiltinFamilyError", bases, {"__module__": __name__})
+        )
+    return result
+
+
+_EXCEPTION_TYPES = _build_exception_types()
+_EXCEPTION_NAMES = ("NotImplementedError", "ValueError", "TypeError", "RuntimeError")
+
+
+def exception_from_response(answer):
+    """Reject malformed records; diagnostic class names never grant membership."""
+    invalid = "Invalid candidate exception protocol"
+    if type(answer) is not dict or answer.get("ok") is not False:
+        return RemoteCandidateError(invalid)
+    mask = answer.get("exception_mask")
+    if type(mask) is not int or mask not in _EXCEPTION_TYPES:
+        return RemoteCandidateError(invalid)
+    expected = next(
+        (name for index, name in enumerate(_EXCEPTION_NAMES) if mask & (1 << index)),
+        None,
+    )
+    if "exception" not in answer or answer["exception"] != expected:
+        return RemoteCandidateError(invalid)
+    label = answer.get("exception_type")
+    message = answer.get("message")
+    if type(label) is not str or len(label) > 200:
+        return RemoteCandidateError(invalid)
+    if type(message) is not str or len(message) > 2000:
+        return RemoteCandidateError(invalid)
+    return _EXCEPTION_TYPES[mask](message)
+
+
 def kill_all():
     """Stop tracked candidate groups at trusted pytest process exit."""
     for process in PROCESSES:
@@ -99,22 +150,22 @@ class Candidate:
                         error_log.seek(max(0, error_path.stat().st_size - 3000))
                         error_tail = error_log.read().decode("utf-8", errors="replace")
                 self.close()
-                raise RuntimeError(
+                raise RemoteCandidateError(
                     "Candidate exited without a complete RPC result: " + error_tail
                 )
             self.pending += block
             if len(self.pending) > MAX_WIRE:
                 self.close()
-                raise RuntimeError("Candidate output exceeds RPC limit")
+                raise RemoteCandidateError("Candidate output exceeds RPC limit")
         line, self.pending = self.pending.split(b"\n", 1)
         try:
             value = json.loads(line)
-        except (ValueError, UnicodeError) as exc:
+        except Exception as exc:
             self.close()
-            raise RuntimeError("Invalid candidate protocol") from exc
+            raise RemoteCandidateError("Invalid candidate protocol") from exc
         if not isinstance(value, dict):
             self.close()
-            raise RuntimeError("Invalid candidate protocol")
+            raise RemoteCandidateError("Invalid candidate protocol")
         return value
 
     def _start(self, deadline):
@@ -137,7 +188,7 @@ class Candidate:
         ready = self._read(deadline)
         if ready.get("ready") is not True or type(ready.get("landlock_abi")) is not int:
             self.close()
-            raise RuntimeError("Candidate sandbox did not initialize")
+            raise RemoteCandidateError("Candidate sandbox did not initialize")
         self.abi = ready["landlock_abi"]
         self.sandbox_policy = ready.get("sandbox_policy")
 
@@ -176,7 +227,7 @@ class Candidate:
             self.process.stdin.flush()
         except (BrokenPipeError, OSError) as exc:
             self.close()
-            raise RuntimeError(
+            raise RemoteCandidateError(
                 "Candidate exited before accepting an RPC request"
             ) from exc
         answer = self._read(deadline)
@@ -186,21 +237,21 @@ class Candidate:
                 value, allow_nan=False, sort_keys=True, separators=(",", ":")
             )
 
-        if canonical(answer.get("args_after")) != canonical(
-            before["args"]
-        ) or canonical(answer.get("kwargs_after")) != canonical(before["kwargs"]):
+        try:
+            changed = canonical(answer.get("args_after")) != canonical(before["args"])
+            changed |= canonical(answer.get("kwargs_after")) != canonical(before["kwargs"])
+        except Exception as exc:
+            raise RemoteCandidateError("Invalid candidate argument echo") from exc
+        if changed:
             raise AssertionError("Candidate modified its input arguments")
         if answer.get("ok") is False:
-            kind = {
-                "ValueError": ValueError,
-                "TypeError": TypeError,
-                "RuntimeError": RuntimeError,
-                "NotImplementedError": NotImplementedError,
-            }.get(answer.get("exception"), RuntimeError)
-            raise kind(answer.get("message", "Candidate exception"))
+            raise exception_from_response(answer)
         if answer.get("ok") is not True:
-            raise RuntimeError("Invalid candidate response")
-        return unpack(answer["value"])
+            raise RemoteCandidateError("Invalid candidate response")
+        try:
+            return unpack(answer["value"])
+        except Exception as exc:
+            raise RemoteCandidateError("Invalid candidate return-value encoding") from exc
 
     def run(self, payload, timeout=90):
         """Invoke the public JSON task function without trusted imports."""
@@ -270,7 +321,7 @@ def run_cli(input, timeout=20):
         err.seek(0)
         stdout, stderr = out.read(MAX_WIRE + 1), err.read(MAX_WIRE + 1)
         if len(stdout) > MAX_WIRE or len(stderr) > MAX_WIRE:
-            raise RuntimeError("Candidate CLI output exceeds limit")
+            raise RemoteCandidateError("Candidate CLI output exceeds limit")
         return SimpleNamespace(
             returncode=process.returncode,
             stdout=stdout.decode("utf-8"),

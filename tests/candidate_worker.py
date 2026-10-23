@@ -14,6 +14,39 @@ from native_state import native_policy_probe
 MAX_WIRE = 16 * 1024 * 1024
 
 
+# Capture real built-in families before importing candidate modules.
+# Names are diagnostic only; membership is determined by actual inheritance.
+_EXCEPTION_TYPE = type
+_EX_IS_SUBCLASS = issubclass
+_EX_ENUMERATE = enumerate
+_EX_TEXT = str
+_EXCEPTION_FAMILIES = (
+    (NotImplementedError, "NotImplementedError"),
+    (ValueError, "ValueError"),
+    (TypeError, "TypeError"),
+    (RuntimeError, "RuntimeError"),
+)
+
+
+def exception_response(exc):
+    """Encode every supported built-in membership, including multiple bases."""
+    actual_type = _EXCEPTION_TYPE(exc)
+    family = None
+    mask = 0
+    for index, (base, name) in _EX_ENUMERATE(_EXCEPTION_FAMILIES):
+        if _EX_IS_SUBCLASS(actual_type, base):
+            mask |= 1 << index
+            if family is None:
+                family = name
+    return {
+        "ok": False,
+        "exception": family,
+        "exception_mask": mask,
+        "exception_type": actual_type.__name__[:200],
+        "message": _EX_TEXT(exc)[:2000],
+    }
+
+
 def main():
     """Apply mandatory isolation before loading or executing candidate code."""
     source, scratch, inputs, mode = sys.argv[1:]
@@ -65,13 +98,20 @@ def main():
                 value = native_policy_probe(*args, **kwargs)
             else:
                 value = getattr(candidate, request["function"])(*args, **kwargs)
-            message = {"ok": True, "value": pack(value)}
         except Exception as exc:
-            message = {
-                "ok": False,
-                "exception": type(exc).__name__,
-                "message": str(exc)[:2000],
-            }
+            message = exception_response(exc)
+        else:
+            # Encoding failures are transport errors, not candidate exceptions.
+            try:
+                message = {"ok": True, "value": pack(value)}
+            except Exception:
+                message = {
+                    "ok": False,
+                    "exception": None,
+                    "exception_mask": 0,
+                    "exception_type": "TransportEncodingError",
+                    "message": "Candidate returned an unsupported RPC value",
+                }
         message["args_after"] = pack(args)
         message["kwargs_after"] = pack(kwargs)
         response.write(
