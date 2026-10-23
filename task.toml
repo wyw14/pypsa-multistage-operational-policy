@@ -8,7 +8,7 @@ authors = [{ name = "wyw" }]
 keywords = ["PyPSA", "multistage", "unit-commitment", "storage", "nested-CVaR"]
 
 [agent]
-timeout_sec = 3600
+timeout_sec = 10800
 
 [environment]
 build_timeout_sec = 1200
@@ -16,7 +16,7 @@ cpus = 1
 memory_mb = 4096
 storage_mb = 6144
 gpus = 0
-allow_internet = true
+network_mode = "public"
 
 [verifier]
 environment_mode = "separate"

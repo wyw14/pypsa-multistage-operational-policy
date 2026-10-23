@@ -152,6 +152,10 @@ def normalize(n, tree, options):
         key = node["id"]
         if not isinstance(key, str) or not key or key in by_id:
             raise ValueError("Node ids must be distinct nonempty strings")
+        if node["parent"] is not None and (
+            not isinstance(node["parent"], str) or not node["parent"]
+        ):
+            raise ValueError("Parent must be a nonempty node id or null")
         if (
             not isinstance(node["stage"], int)
             or isinstance(node["stage"], bool)

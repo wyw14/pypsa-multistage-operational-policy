@@ -1,6 +1,6 @@
-"""Multistage operational-policy extension (author task, not upstream feature)."""
+"""Multistage operational-policy extension."""
 
 
 def optimize_policy_tree(network, tree, options):
-    """Implement the complete public contract in /app/instruction.md."""
+    """Optimize the operational policy under the task's public contract."""
     raise NotImplementedError("Implement the policy-tree operational optimizer")

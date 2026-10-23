@@ -59,6 +59,26 @@ def initialize() -> None:
     """Reset reward atomically, including a reused read-only regular file."""
     LOGS.mkdir(parents=True, exist_ok=True)
     atomic_write(LOGS / "reward.txt", "0\n")
+    discard_alternate_reward()
+
+
+def discard_alternate_reward() -> None:
+    """Remove the unused reward format before it can shadow this run's score."""
+    alternate = LOGS / "reward.json"
+    try:
+        metadata = alternate.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(metadata.st_mode):
+        alternate.unlink()
+        raise RuntimeError("Linked alternate reward was removed; refusing this run")
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError("Alternate reward must be a regular file")
+    if metadata.st_nlink != 1:
+        alternate.unlink()
+        raise RuntimeError("Shared alternate reward was removed; refusing this run")
+    alternate.chmod(0o600)
+    alternate.unlink()
 
 
 def contract() -> dict:

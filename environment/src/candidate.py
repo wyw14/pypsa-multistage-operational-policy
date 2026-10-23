@@ -18,8 +18,11 @@ def build_network(data):
     if not isinstance(data, dict) or set(data) - set(allowed):
         raise ValueError("Unsupported network component")
     for key, (kind, fields) in allowed.items():
+        records = data.get(key, [])
+        if not isinstance(records, list):
+            raise ValueError("Component collections must be arrays")
         seen = set()
-        for raw in data.get(key, []):
+        for raw in records:
             if not isinstance(raw, dict) or set(raw) - fields:
                 raise ValueError("Unsupported component attribute")
             item = dict(raw)
@@ -35,6 +38,9 @@ def solve(payload):
     if not isinstance(payload, dict):
         raise ValueError("Expected an object")
     operation = payload.get("operation", "policy")
+    required = {"network", "load"} if operation == "deterministic" else {"network", "tree", "options"}
+    if not required.issubset(payload):
+        raise ValueError("Missing required payload field")
     n = build_network(payload["network"])
     if operation == "deterministic":
         n.set_snapshots([0])

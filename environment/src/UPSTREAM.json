@@ -5,6 +5,6 @@
   "commit": "6c45594596cbc5612511ee9202a9e269e5001d88",
   "archive": "https://codeload.github.com/PyPSA/PyPSA/zip/6c45594596cbc5612511ee9202a9e269e5001d88",
   "license": "MIT (source)",
-  "source_scope": "The complete upstream pypsa Python package; optimization accessor extension and policy_schema.py are task additions.",
-  "task_origin": "Author-defined extension, not a claim of an upstream defect or production incident."
+  "source_scope": "The complete upstream pypsa Python package with a policy_tree optimization accessor and scenario_tree.py, policy_schema.py and policy_numeric.py additions.",
+  "task_origin": "Author-defined operational-policy extension."
 }

@@ -132,6 +132,20 @@ def branched(storage=False):
     return case
 
 
+@pytest.mark.parametrize("malformed", ["network", "tree", "options", "collection", "parent"])
+def test_malformed_adapter_structure_raises_value_error(malformed):
+    """题面：结构或支持域错误抛 `ValueError`，不依赖异常消息。"""
+    case = branched()
+    if malformed == "collection":
+        case["network"]["loads"] = None
+    elif malformed == "parent":
+        case["tree"][1]["parent"] = ["root"]
+    else:
+        del case[malformed]
+    with pytest.raises(ValueError):
+        run_candidate(case)
+
+
 def validate(case, result, optimum=None):
     if optimum is not None and not math.isfinite(optimum):
         assert result == {"status": "infeasible"}
@@ -953,17 +967,17 @@ def test_public_rounding_budget_checks_every_actual_topology(bad_node):
         run_candidate(case)
 
 
-def test_old_unrepresentable_angle_is_explicitly_outside_numeric_v2():
+def test_unrepresentable_angle_is_outside_the_numeric_domain():
     """题面："Line.x"；"[1e-12,1e6] 欧姆"；"范围或预算不符抛 `ValueError`"。
 
-    The old minimal-subnormal reactance required a1MW angle below the smallest
-    representable value. The new public interval and independent budget both
-    exclude it; positive subnormal probability remains a separate legal case.
+    Minimal-subnormal reactance would require a 1 MW angle below the smallest
+    representable value. The public interval and independent budget exclude
+    it; positive subnormal probability remains a separate legal case.
     """
     case = analytic_network_case(reactance=float.fromhex("0x0.0000000000001p-1022"))
     budgets = independent_angle_budgets(case)
     assert budgets[0][2] == 2, (
-        "Exact independent rounding-flow bound for the old impossible example is2MW"
+        "Exact independent rounding-flow bound for this fixture is 2 MW"
     )
     with pytest.raises(ValueError):
         run_candidate(case)
@@ -1008,11 +1022,11 @@ def mixed_cost_scale_case():
     return case
 
 
-def test_original_single_bus_mixed_cost_counterexample_has_optimum_one():
+def test_single_bus_mixed_cost_has_unit_optimum():
     """“最小化 `V_root`。”
 
-    The original frozen counterexample is preserved: one bus, one hour,
-    demand1, generator prices2/1/1e13 and shedding price10. G1=1 attains1;
+    One bus, one hour, demand1, generator prices2/1/1e13 and shedding price10.
+    G1=1 attains1;
     every supply price is at least1, so the exact optimum is1, independently
     of the reference implementation and the enumerated LP.
     """
