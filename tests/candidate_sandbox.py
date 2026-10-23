@@ -1,4 +1,4 @@
-"""Root-owned assets and mandatory seccomp; Landlock strengthens isolation."""
+"""Filesystem isolation, mandatory seccomp and root-owned verifier assets."""
 
 import ctypes
 import errno
@@ -15,6 +15,7 @@ import tempfile
 
 NOBODY = 65534
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 
 
 def _root_only(path):
@@ -28,7 +29,7 @@ def _root_only(path):
 
 
 def _landlock(libc, source, scratch, public_inputs):
-    """Prepare an optional filesystem allowlist before dropping identity."""
+    """Prepare the filesystem allowlist when the host supports Landlock."""
     abi = libc.syscall(444, 0, 0, 1)
     if abi < 3:
         reason = os.strerror(ctypes.get_errno()) if abi < 0 else "ABI below 3"
@@ -168,13 +169,16 @@ def restrict(source, scratch, public_inputs):
     libc = ctypes.CDLL(None, use_errno=True)
     libc.syscall.restype = ctypes.c_long
     rules, landlock = _landlock(libc, source, scratch, public_inputs)
-    if rules is None and not dac_ready:
-        raise RuntimeError(
-            "Neither Landlock nor root-only permissions can protect the verifier"
-        )
+    filesystem = "landlock"
+    identity = NOBODY
+    if rules is None:
+        from runtime_root import enter_root
+
+        identity = enter_root(source, scratch, public_inputs)
+        filesystem = "chroot"
     os.setgroups([])
-    os.setgid(NOBODY)
-    os.setuid(NOBODY)
+    os.setgid(identity)
+    os.setuid(identity)
     if libc.prctl(38, 1, 0, 0, 0) != 0:
         raise OSError(ctypes.get_errno(), "PR_SET_NO_NEW_PRIVS")
     if rules is not None:
@@ -186,11 +190,9 @@ def restrict(source, scratch, public_inputs):
                     "reason": "landlock_restrict_self: "
                     + os.strerror(ctypes.get_errno()),
                 }
-                if not dac_ready:
-                    raise RuntimeError(
-                        "Landlock activation failed and "
-                        "root-only asset permissions are absent"
-                    )
+                # Identity has already been dropped, so no further privilege
+                # transition can safely construct the alternate filesystem.
+                raise RuntimeError("Landlock activation failed; candidate was not run")
         finally:
             os.close(rules)
     _seccomp(libc)
@@ -205,6 +207,7 @@ def restrict(source, scratch, public_inputs):
         "no_new_privileges": True,
         "dac_root_only": dac_ready,
         "landlock": landlock,
+        "filesystem": filesystem,
     }
 
 
@@ -221,8 +224,10 @@ def _preflight(configuration):
             else:
                 with path.open("rb") as handle:
                     handle.read(1)
-        except PermissionError:
-            probes.append({"path": str(path), "read_denied": True})
+        except (PermissionError, FileNotFoundError) as error:
+            probes.append(
+                {"path": str(path), "read_denied": True, "denial": type(error).__name__}
+            )
         else:
             raise RuntimeError("Candidate can read trusted asset: " + str(path))
     with open(configuration["source"] + "/candidate.py", "rb"):
@@ -230,6 +235,15 @@ def _preflight(configuration):
     scratch_probe = Path(configuration["scratch"]) / "writable-probe"
     scratch_probe.write_text("probe", encoding="ascii")
     scratch_probe.unlink()
+    outside = "/tmp/candidate-must-not-write-outside-scratch"
+    try:
+        descriptor = os.open(outside, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except PermissionError:
+        outside_write_denied = True
+    else:
+        os.close(descriptor)
+        os.unlink(outside)
+        raise RuntimeError("Candidate can write outside its private scratch directory")
     try:
         descriptor = os.open(configuration["reward"], os.O_WRONLY)
     except PermissionError:
@@ -249,6 +263,7 @@ def _preflight(configuration):
             "asset_probes": probes,
             "reward_write_denied": reward_denied,
             "network_socket_denied": network_denied,
+            "outside_scratch_write_denied": outside_write_denied,
         }
     )
     return policy
@@ -298,6 +313,17 @@ def prepare_sandbox(tests_dir, logs_dir, private_dir):
     os.chown(scratch, NOBODY, NOBODY)
     inputs = folder / "inputs"
     inputs.mkdir(mode=0o755)
+    # Stage source only when a separate filesystem is needed. Dependency
+    # libraries were provisioned at build, outside the verifier deadline.
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    rules, _ = _landlock(libc, "/app/src", str(scratch), str(inputs))
+    if rules is None:
+        from runtime_root import prepare_root
+
+        prepare_root("/app/src")
+    else:
+        os.close(rules)
     configuration = {
         "source": "/app/src",
         "scratch": str(scratch),

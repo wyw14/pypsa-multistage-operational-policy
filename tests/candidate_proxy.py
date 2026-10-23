@@ -205,6 +205,10 @@ class Candidate:
                 if not target.exists():
                     target.write_bytes(data)
                     target.chmod(0o444)
+                if (self.sandbox_policy or {}).get("filesystem") == "chroot":
+                    from runtime_root import publish_input
+
+                    publish_input(target, self.inputs)
                 return str(target)
         if type(value) in (list, tuple):
             return type(value)(self._publish_files(v) for v in value)
