@@ -111,20 +111,23 @@
     "test_outputs.py::test_active_zero_capacity_bridge_still_couples_island_angles"
   ],
   "test_files_sha256": {
-    "candidate_proxy.py": "6c533786ea0991804b5eb6673f6dd92a565b87e8c39b72948ac99f69098a90a6",
+    "candidate_proxy.py": "a6be61ee8fa173b40b4a9dddb3350bfbc8effe68bad2fa0c7c787164337491b9",
     "candidate_sandbox.py": "96aa485b07dd831c95183bd7ecd550ce1e7662e8ce07be88d20179e547fb65d3",
     "candidate_worker.py": "8b15aeff2b8f25ae0ed724532e146ef7f5e2601f3baa346cc791bdf592949f3f",
-    "grade.py": "2ffb9c0a53afb5b769d954e47f815922231185cbe4ae446995f0aeb508660bfc",
+    "grade.py": "99ddc0974199a26544e034390b4a7f4aff7d53170d22c9f8afc4fec5f4ddca95",
     "independent.py": "db3a846a39f9cc6a2ad4e6ca97a51478bb4e12e77882a4c7a521df1ecab1290f",
     "numeric_domain.py": "3da7f8d200a73c1e9e9ec6201784b2daaa262c27b22613c44ea8c6d41dc0f325",
     "pytest.ini": "1c4ea57d78b41c8cdb046467d2069100704adaadfd72025e54ea5c0e1010092c",
     "requirements-test.txt": "512657e574994ee3094aa35f5482cce0d052c589d6ad049e69836bbc9d939695",
-    "test.sh": "b64a1a19b5c75bdc1d20ab3839469b3685c9fd00d17e1c9b89d552fda7165dc2",
-    "test_outputs.py": "21704abae046e1b2de064d3498e670f4a839855e1cd0ef911a5ef5278228cefc",
-    "trusted_runner.py": "c155fca30a759ae96dea144804370e97c51b1686fbbc747c1ecf5e69caa9fe27",
+    "test.sh": "0c7142955af9e4b9e0169865423447848be331b395ba8b430be1038f968d6ab3",
+    "test_outputs.py": "3c55c9280b902988103985cf0c240a27c871f9c88eb362a2ec276279995ac3f1",
+    "trusted_runner.py": "287391d671105943bb77fdc5be203cccd6d9792f00744019a31661ea521cc610",
     "wheels-sha256.txt": "5449bf76235bdd76ddc6a5dae7db6cb9436e22ea692007be30e491f2b5822c35",
     "wire_codec.py": "3d61ba0574574b7bbe36dfc26ffa0e57b4d94b16b78c3e91b24c64ffa343e7dc",
     "native_state.py": "6012ec012e6e86139bf1f4ad0ef86b52e62817ee500b950daed622e928fa6f07",
-    "runtime_root.py": "409e8b4435704a8167e202708dd1d1418784eee1afc0a2741acae203164f182f"
+    "runtime_root.py": "409e8b4435704a8167e202708dd1d1418784eee1afc0a2741acae203164f182f",
+    "runtime_observations.py": "7b5dc5e76c80b75f81b6c7c81d22be054c855a62a0bde8e373444255427e5d1e",
+    "scoring.py": "17603d46a2dec7086ff66155ecdc611c9b7adc714a396b7caea1ccbe39aaf5f0",
+    "scoring.json": "858e56aff9e2ab1722593e59cecd4db00b393564cfbcf1cb594e3cd0fb4fec11"
   }
 }

@@ -2,7 +2,7 @@
 
 This module never executes candidate code. It authenticates test identities,
 records infrastructure errors, cleans candidate process groups, and publishes
-reward only after a complete successful pytest session.
+behavior-weighted reward after a complete, trustworthy pytest session.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def cleanup(workspace: Path) -> None:
 
 
 def finalize(workspace: Path, pytest_status: int, stage: str) -> None:
-    """Accept only the exact full test collection and all three passing phases."""
+    """Separate execution integrity from independent scientific test credit."""
     record = {"verifier_version": "pytest-cli-v2", "reward": 0, "timed_out": False}
     started = time.monotonic()
     try:
@@ -183,13 +183,11 @@ def finalize(workspace: Path, pytest_status: int, stage: str) -> None:
             and set(outcomes) == set(expected)
         )
         record["collection_complete"] = complete
-        if (
-            complete
-            and not record["timed_out"]
-            and pytest_status == data["exitstatus"] == 0
-            and record["passed_tests"] == len(expected)
-        ):
-            record["reward"] = 1
+        sys.path.insert(0, str(HERE))
+        from scoring import score_results
+
+        policy = json.loads((HERE / "scoring.json").read_text(encoding="utf-8"))
+        record.update(score_results(data, expected, policy, pytest_status))
     except Exception as error:
         record["reward"] = 0
         record["grader_error"] = type(error).__name__ + ": " + str(error)

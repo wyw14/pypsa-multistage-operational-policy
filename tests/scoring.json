@@ -1,0 +1,713 @@
+{
+  "schema": "behavior-weighting-v1",
+  "aggregation": "Sum positive per-test weights after trustworthy complete execution. Parameter cases share a fixed scientific-family budget within each domain; adding cases does not increase its budget.",
+  "hard_gates": [
+    "Exact authenticated collection and complete setup/call/teardown for every node.",
+    "No candidate crash, RPC deadline, broken protocol, interrupted verification or incomplete session.",
+    "At least one new policy result must have its complete public schema checked, or report infeasibility confirmed by independent enumeration. Existing deterministic dispatch and adapter checks alone do not deliver the requested policy interface."
+  ],
+  "groups": [
+    {
+      "behavior": "information_and_risk",
+      "weight": 0.2,
+      "reason": "Causal commitments and conditional tail risk determine the executable policy under sequential observations."
+    },
+    {
+      "behavior": "commitment_history",
+      "weight": 0.14,
+      "reason": "Initial obligations, transition ramps and leaf carry state determine whether the schedule can be operated."
+    },
+    {
+      "behavior": "storage_continuity",
+      "weight": 0.16,
+      "reason": "Storage inherits actual parent energy and obeys losses, exclusive operating modes and terminal reserve."
+    },
+    {
+      "behavior": "network_physics",
+      "weight": 0.15,
+      "reason": "Active topology, island gauges and DC power transfers must remain valid across electrical scales."
+    },
+    {
+      "behavior": "economic_optimality",
+      "weight": 0.12,
+      "reason": "A feasible dispatch must attain the stated optimum in original cost and physical units."
+    },
+    {
+      "behavior": "feasibility",
+      "weight": 0.05,
+      "reason": "True infeasibility must be distinguished from numerical failure and feasible schedules."
+    },
+    {
+      "behavior": "native_integration",
+      "weight": 0.07,
+      "reason": "Native state, existing dispatch, ordering invariance and the supported tree size must remain usable."
+    },
+    {
+      "behavior": "numeric_domain",
+      "weight": 0.07,
+      "reason": "Inclusive bounds and topology-dependent rounding budgets define the promised numerical support."
+    },
+    {
+      "behavior": "input_contract",
+      "weight": 0.04,
+      "reason": "Malformed adapters and unsupported tree attributes must be rejected by the declared interface."
+    }
+  ],
+  "tests": [
+    {
+      "weight": 0.05,
+      "behavior": "information_and_risk",
+      "reason": "题面：\"同一父节点的所有子节点对每台热机必须具有相同 u\"。\n\nThe quiet child has no sink for positive minimum generation; both children must inherit the single offline commitment and the exact causal cost is422.8.",
+      "id": "test_outputs.py::test_advance_commitment_cannot_use_the_next_observation"
+    },
+    {
+      "weight": 0.0125,
+      "behavior": "information_and_risk",
+      "reason": "题面：\"这是逐层条件风险，不是对整条叶路径总成本做一次静态 CVaR。\"。\n\nA second branching level exercises conditional rather than whole-path tail loss, including expectation and pure-CVaR boundaries. Registered scenario: 0-0.8",
+      "id": "test_outputs.py::test_advance_commitment_and_nested_conditional_risk[0-0.8]"
+    },
+    {
+      "weight": 0.0125,
+      "behavior": "information_and_risk",
+      "reason": "题面：\"这是逐层条件风险，不是对整条叶路径总成本做一次静态 CVaR。\"。\n\nA second branching level exercises conditional rather than whole-path tail loss, including expectation and pure-CVaR boundaries. Registered scenario: 0.65-0.73",
+      "id": "test_outputs.py::test_advance_commitment_and_nested_conditional_risk[0.65-0.73]"
+    },
+    {
+      "weight": 0.0125,
+      "behavior": "information_and_risk",
+      "reason": "题面：\"这是逐层条件风险，不是对整条叶路径总成本做一次静态 CVaR。\"。\n\nA second branching level exercises conditional rather than whole-path tail loss, including expectation and pure-CVaR boundaries. Registered scenario: 1-0.5",
+      "id": "test_outputs.py::test_advance_commitment_and_nested_conditional_risk[1-0.5]"
+    },
+    {
+      "weight": 0.0125,
+      "behavior": "information_and_risk",
+      "reason": "题面：\"这是逐层条件风险，不是对整条叶路径总成本做一次静态 CVaR。\"。\n\nA second branching level exercises conditional rather than whole-path tail loss, including expectation and pure-CVaR boundaries. Registered scenario: 0.8-0",
+      "id": "test_outputs.py::test_advance_commitment_and_nested_conditional_risk[0.8-0]"
+    },
+    {
+      "weight": 0.05,
+      "behavior": "information_and_risk",
+      "reason": "题面：\"边界原子只取所需质量。\"；\"同一父节点的所有子节点对每台热机必须具有相同 u\"。\n\nA rare loss of 1e13 at probability1e-13 costs1.5 under the declared mixed\ntail risk, whereas the shared next-hour commitment costs exactly0.5.",
+      "id": "test_outputs.py::test_tiny_probability_keeps_a_material_tail_risk_contribution"
+    },
+    {
+      "weight": 0.05,
+      "behavior": "information_and_risk",
+      "reason": "“特别在 λ=1 时不额外要求非尾部分支各自条件最优。”\n\nA high branch needs10 but free generation is capped at1, proving root\nCVaR9. Shedding1 on the low branch stays outside the worst half mass and\nis equally root-optimal; the validator must accept that returned policy.",
+      "id": "test_outputs.py::test_pure_cvar_accepts_a_root_optimal_non_tail_policy"
+    },
+    {
+      "weight": 0.07,
+      "behavior": "commitment_history",
+      "reason": "题面：\"沿每条路径遵守最短开/停时间\"。\n\nThe prior unfinished on obligation, ramp bounds and finite-window carry state are checked against independent discrete policies.",
+      "id": "test_outputs.py::test_uc_initial_history_ramps_and_leaf_obligations"
+    },
+    {
+      "weight": 0.07,
+      "behavior": "commitment_history",
+      "reason": "“p_prev - p <= P*(ramp_limit_down*u + ramp_limit_shut_down*(u_prev-u))”\n\nInitial and root commitment are on. Prior output10 and ordinary down limit2\nforce thermal output at least8, although free renewable power could supply\nthe entire10MW load. Thermal8 plus renewable2 attains the cost lower bound8.",
+      "id": "test_outputs.py::test_ordinary_down_ramp_has_an_attainable_eight_cost_lower_bound"
+    },
+    {
+      "weight": 0.04,
+      "behavior": "storage_continuity",
+      "reason": "题面：\"其余节点来自真实父节点结束电量。\"。\n\nStorage is shared before the fork, then evolves on its actual branch through islanding and reconnection under advance commitments.",
+      "id": "test_outputs.py::test_storage_inheritance_islanding_and_reconnection"
+    },
+    {
+      "weight": 0.04,
+      "behavior": "storage_continuity",
+      "reason": "题面：\"一个小时不能同时充放电，均为零允许。\"。\n\nEnumerated idle/charge/discharge modes enforce losses, both conversion efficiencies and each terminal reserve.",
+      "id": "test_outputs.py::test_storage_losses_efficiencies_reserve_and_exclusive_modes"
+    },
+    {
+      "weight": 0.04,
+      "behavior": "storage_continuity",
+      "reason": "“每个叶端独立满足最低终端储备。”\n\nThe sole one-hour leaf must supply demand1 and charge1. G1 can supply\nexactly two at price1, while the unused unit costs1e13: primal and total\nenergy lower bound both give objective2, with terminal energy exactly1.",
+      "id": "test_outputs.py::test_mixed_cost_scale_respects_charge_and_terminal_energy"
+    },
+    {
+      "weight": 0.02,
+      "behavior": "storage_continuity",
+      "reason": "“e = (1-standing_loss)*e_prev + efficiency_store*charge - discharge/efficiency_dispatch”\n\nSOC starts at1e10-1; terminal energy is higher by exactly1 or0.75.\nWith no discharge and binary-exact efficiency2^-19, charge and generation\nare bounded below by increment*2^19, attaining that exact cost at price1.\nThis checks a material increment on a large origin, including a reserve\nstrictly inside the capacity boundary, independently of either LP solver. Registered scenario: 1.0",
+      "id": "test_outputs.py::test_large_soc_origin_cannot_erase_a_material_charging_requirement[1.0]"
+    },
+    {
+      "weight": 0.02,
+      "behavior": "storage_continuity",
+      "reason": "“e = (1-standing_loss)*e_prev + efficiency_store*charge - discharge/efficiency_dispatch”\n\nSOC starts at1e10-1; terminal energy is higher by exactly1 or0.75.\nWith no discharge and binary-exact efficiency2^-19, charge and generation\nare bounded below by increment*2^19, attaining that exact cost at price1.\nThis checks a material increment on a large origin, including a reserve\nstrictly inside the capacity boundary, independently of either LP solver. Registered scenario: 0.75",
+      "id": "test_outputs.py::test_large_soc_origin_cannot_erase_a_material_charging_requirement[0.75]"
+    },
+    {
+      "weight": 0.025,
+      "behavior": "network_physics",
+      "reason": "题面：\"停运线路 f=0 且不再关联两端相角。\"。\n\nA nonreference island bus retains a genuine angle drop; the failed branch must not falsely tie it to a separate island.",
+      "id": "test_outputs.py::test_mesh_flow_and_independent_island_angle_gauges"
+    },
+    {
+      "weight": 0.025,
+      "behavior": "network_physics",
+      "reason": "题面：\"`v_nom>0`（kV），`x>0`（欧姆），`s_nom>=0`（MW）。\"\n\nThe on-line two-bus certificate has G=f=1, no shedding, and thetaB=-x/v²;\nnonnegative costs give the matching one-unit lower bound independently.",
+      "id": "test_outputs.py::test_positive_reactance_has_no_hidden_lower_floor"
+    },
+    {
+      "weight": 0.025,
+      "behavior": "network_physics",
+      "reason": "题面：\"f = (v_nom(bus0)**2/x)*(theta_bus0-theta_bus1), |f| <= s_nom\"。\n\nAn explicit feasible optimum distinguishes electrical infeasibility from\nsolver matrix errors; a tiny but necessary angle cannot be rounded to zero.",
+      "id": "test_outputs.py::test_finite_large_dc_coefficient_preserves_tiny_physical_angle"
+    },
+    {
+      "weight": 0.025,
+      "behavior": "network_physics",
+      "reason": "题面：\"f = (v_nom(bus0)**2/x)*(theta_bus0-theta_bus1), |f| <= s_nom\"。\n\nTwo consecutive lines differ in reactance by1e12, but each must transfer\none MW. The explicit angle certificate and a cost lower bound establish\noptimum1 independently; the JSON-only resistance-form LP must agree.",
+      "id": "test_outputs.py::test_mixed_reactances_preserve_a_required_transfer"
+    },
+    {
+      "weight": 0.025,
+      "behavior": "network_physics",
+      "reason": "“f = (v_nom(bus0)**2/x)*(theta_bus0-theta_bus1), |f| <= s_nom”\n\nParallel reactances1e-12/1e6 split flow in ratio1e18. The stiff line cap\n2e-13 admits total2e-13*(1+1e-18), leaving an analytic shedding cost8.\nNodal rational transfer factors independently recover the same bound.",
+      "id": "test_outputs.py::test_stiff_parallel_mesh_keeps_tiny_transfer_economically_material"
+    },
+    {
+      "weight": 0.025,
+      "behavior": "network_physics",
+      "reason": "“零容量在运线路的 w 为0，仍属于电气连通图。”\n\nZero-capacity activeAC joins gaugeA to C while BC carries oneMW from C to B.\nThus thetaC=thetaA=0 and thetaB=-0.01. DeletingAC incorrectly makes B a\nseparate gauge, producing thetaC=0.01 despite the activeAC zero-flow law.\nG=1 has cost1 and attains the supply-price lower bound independently.",
+      "id": "test_outputs.py::test_active_zero_capacity_bridge_still_couples_island_angles"
+    },
+    {
+      "weight": 0.04,
+      "behavior": "economic_optimality",
+      "reason": "“最小化 `V_root`。”\n\nOne bus, one hour, demand1, generator prices2/1/1e13 and shedding price10.\nG1=1 attains1;\nevery supply price is at least1, so the exact optimum is1, independently\nof the reference implementation and the enumerated LP.",
+      "id": "test_outputs.py::test_single_bus_mixed_cost_has_unit_optimum"
+    },
+    {
+      "weight": 0.013333333333,
+      "behavior": "economic_optimality",
+      "reason": "“最小化 `V_root`。”\n\nAt each hour the primal G1=1 attains one; every available supply/shedding\nprice is at least one, proving the matching lower bound without an LP.\nIdentical child costs make the exact two-hour risk objective two for all\nthree declared risk regimes, despite an unused 1e13-price generator. Registered scenario: 0.0-0.0",
+      "id": "test_outputs.py::test_unused_expensive_capacity_cannot_erase_material_merit_order[0.0-0.0]"
+    },
+    {
+      "weight": 0.013333333333,
+      "behavior": "economic_optimality",
+      "reason": "“最小化 `V_root`。”\n\nAt each hour the primal G1=1 attains one; every available supply/shedding\nprice is at least one, proving the matching lower bound without an LP.\nIdentical child costs make the exact two-hour risk objective two for all\nthree declared risk regimes, despite an unused 1e13-price generator. Registered scenario: 0.65-0.73",
+      "id": "test_outputs.py::test_unused_expensive_capacity_cannot_erase_material_merit_order[0.65-0.73]"
+    },
+    {
+      "weight": 0.013333333333,
+      "behavior": "economic_optimality",
+      "reason": "“最小化 `V_root`。”\n\nAt each hour the primal G1=1 attains one; every available supply/shedding\nprice is at least one, proving the matching lower bound without an LP.\nIdentical child costs make the exact two-hour risk objective two for all\nthree declared risk regimes, despite an unused 1e13-price generator. Registered scenario: 1.0-0.5",
+      "id": "test_outputs.py::test_unused_expensive_capacity_cannot_erase_material_merit_order[1.0-0.5]"
+    },
+    {
+      "weight": 0.040000000001,
+      "behavior": "economic_optimality",
+      "reason": "“每母线：发电 + 放电 - 充电 + 削负荷 - 需求 = 向外线路净流出。”\n\nDemand1e-12 at generation price5e12 versus shedding price1e13 has exact\noptimum5. A zero primal residual in rescaled units cannot replace the\noriginal-unit balance or erase its material economic consequence.",
+      "id": "test_outputs.py::test_tiny_load_with_material_cost_keeps_original_unit_balance"
+    },
+    {
+      "weight": 0.0125,
+      "behavior": "feasibility",
+      "reason": "题面：\"合法输入但约束无解返回\"。\n\nInitial commitment obligations, excess minimum power, terminal reserve and forbidden circulating storage each have genuinely infeasible physical schedules. Registered scenario: initial-obligation",
+      "id": "test_outputs.py::test_true_infeasibility_is_reported[initial-obligation]"
+    },
+    {
+      "weight": 0.0125,
+      "behavior": "feasibility",
+      "reason": "题面：\"合法输入但约束无解返回\"。\n\nInitial commitment obligations, excess minimum power, terminal reserve and forbidden circulating storage each have genuinely infeasible physical schedules. Registered scenario: excess-minimum",
+      "id": "test_outputs.py::test_true_infeasibility_is_reported[excess-minimum]"
+    },
+    {
+      "weight": 0.0125,
+      "behavior": "feasibility",
+      "reason": "题面：\"合法输入但约束无解返回\"。\n\nInitial commitment obligations, excess minimum power, terminal reserve and forbidden circulating storage each have genuinely infeasible physical schedules. Registered scenario: terminal-reserve",
+      "id": "test_outputs.py::test_true_infeasibility_is_reported[terminal-reserve]"
+    },
+    {
+      "weight": 0.0125,
+      "behavior": "feasibility",
+      "reason": "题面：\"合法输入但约束无解返回\"。\n\nInitial commitment obligations, excess minimum power, terminal reserve and forbidden circulating storage each have genuinely infeasible physical schedules. Registered scenario: storage-no-disposal",
+      "id": "test_outputs.py::test_true_infeasibility_is_reported[storage-no-disposal]"
+    },
+    {
+      "weight": 0.0175,
+      "behavior": "native_integration",
+      "reason": "题面：\"保持入口、原生组件语义和已有 `n.optimize(...)` 可用。\"。\n\nA native one-bus merit-order dispatch has exact cost six and supplies two MW.",
+      "id": "test_outputs.py::test_native_deterministic_entry_still_works"
+    },
+    {
+      "weight": 0.0175,
+      "behavior": "native_integration",
+      "reason": "题面：\"树数组不要求按时间或字典排序。\"。\n\nReversing component and node arrays retains the same parent-indexed feasible set and optimum, allowing different optimal actions.",
+      "id": "test_outputs.py::test_node_and_component_order_do_not_change_policy_problem"
+    },
+    {
+      "weight": 0.0175,
+      "behavior": "native_integration",
+      "reason": "题面：\"1–25 个节点对象的数组\"。\n\nAn exact three-hour constant-demand cost verifies the declared upper node count and all three levels of observations.",
+      "id": "test_outputs.py::test_twenty_five_node_supported_tree"
+    },
+    {
+      "weight": 0.0175,
+      "behavior": "native_integration",
+      "reason": "“函数不能改变传入的 network、tree 或 options”\n\nA real Network is constructed and observed by the isolated worker. The\ntrusted parent compares all public component static/time-series tables,\nsnapshots/weights and metadata, including NaN/index/dtype semantics. The\npolicy must independently attain the same analytic unit-cost lower bound.",
+      "id": "test_outputs.py::test_native_policy_preserves_public_network_state"
+    },
+    {
+      "weight": 0.005833333333,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"probability: 从父节点到本节点的条件概率，严格正数，根为1\"。\n\nEqual-cost children have an exact total of two; a positive branch remains\nphysically represented even when its probability is a subnormal float. Registered scenario: 1e-13",
+      "id": "test_outputs.py::test_all_strictly_positive_representable_probabilities_are_valid[1e-13]"
+    },
+    {
+      "weight": 0.005833333333,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"probability: 从父节点到本节点的条件概率，严格正数，根为1\"。\n\nEqual-cost children have an exact total of two; a positive branch remains\nphysically represented even when its probability is a subnormal float. Registered scenario: 5e-324",
+      "id": "test_outputs.py::test_all_strictly_positive_representable_probabilities_are_valid[5e-324]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Bus.v_nom-0.001",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Bus.v_nom-0.001]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Bus.v_nom-100000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Bus.v_nom-100000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Line.x-1e-12",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Line.x-1e-12]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Line.x-1000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Line.x-1000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Line.s_nom-0.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Line.s_nom-0.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Line.s_nom-1000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Line.s_nom-1000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.p_nom-1e-06",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.p_nom-1e-06]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.p_nom-1000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.p_nom-1000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.p_nom-1e-06",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.p_nom-1e-06]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.p_nom-1000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.p_nom-1000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.max_hours-1e-06",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.max_hours-1e-06]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.max_hours-10000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.max_hours-10000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.efficiency_store-1e-06",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.efficiency_store-1e-06]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.efficiency_store-1.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.efficiency_store-1.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.efficiency_dispatch-1e-06",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.efficiency_dispatch-1e-06]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.efficiency_dispatch-1.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.efficiency_dispatch-1.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.marginal_cost-0.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.marginal_cost-0.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.marginal_cost-10000000000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.marginal_cost-10000000000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.stand_by_cost-0.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.stand_by_cost-0.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.stand_by_cost-10000000000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.stand_by_cost-10000000000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.start_up_cost-0.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.start_up_cost-0.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.start_up_cost-10000000000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.start_up_cost-10000000000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.shut_down_cost-0.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.shut_down_cost-0.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: Generator.shut_down_cost-10000000000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[Generator.shut_down_cost-10000000000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.marginal_cost-0.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.marginal_cost-0.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: StorageUnit.marginal_cost-10000000000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[StorageUnit.marginal_cost-10000000000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: options.shed_cost-0.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[options.shed_cost-0.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: options.shed_cost-10000000000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[options.shed_cost-10000000000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: options.throughput_cost-0.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[options.throughput_cost-0.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"所有区间均含端点\"。\n\nEvery new scalar endpoint admits the exact idle certificate with zero\ndemand, offline thermal unit and empty storage. This tests public domain\nadmission, not numerical optimality at all combinations of extrema. Registered scenario: options.throughput_cost-10000000000000.0",
+      "id": "test_outputs.py::test_public_numeric_interval_endpoints_are_inclusive[options.throughput_cost-10000000000000.0]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Bus.v_nom-0.0009999999999999998",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Bus.v_nom-0.0009999999999999998]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Bus.v_nom-100000.00000000001",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Bus.v_nom-100000.00000000001]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Line.x-9.999999999999998e-13",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Line.x-9.999999999999998e-13]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Line.x-1000000.0000000001",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Line.x-1000000.0000000001]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Line.s_nom--5e-324",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Line.s_nom--5e-324]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Line.s_nom-1000000.0000000001",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Line.s_nom-1000000.0000000001]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.p_nom-9.999999999999997e-07",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.p_nom-9.999999999999997e-07]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.p_nom-1000000.0000000001",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.p_nom-1000000.0000000001]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.p_nom-9.999999999999997e-07",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.p_nom-9.999999999999997e-07]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.p_nom-1000000.0000000001",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.p_nom-1000000.0000000001]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.max_hours-9.999999999999997e-07",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.max_hours-9.999999999999997e-07]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.max_hours-10000.000000000002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.max_hours-10000.000000000002]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.efficiency_store-9.999999999999997e-07",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.efficiency_store-9.999999999999997e-07]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.efficiency_store-1.0000000000000002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.efficiency_store-1.0000000000000002]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.efficiency_dispatch-9.999999999999997e-07",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.efficiency_dispatch-9.999999999999997e-07]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.efficiency_dispatch-1.0000000000000002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.efficiency_dispatch-1.0000000000000002]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.marginal_cost--5e-324",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.marginal_cost--5e-324]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.marginal_cost-10000000000000.002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.marginal_cost-10000000000000.002]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.stand_by_cost--5e-324",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.stand_by_cost--5e-324]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.stand_by_cost-10000000000000.002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.stand_by_cost-10000000000000.002]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.start_up_cost--5e-324",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.start_up_cost--5e-324]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.start_up_cost-10000000000000.002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.start_up_cost-10000000000000.002]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.shut_down_cost--5e-324",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.shut_down_cost--5e-324]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: Generator.shut_down_cost-10000000000000.002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[Generator.shut_down_cost-10000000000000.002]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.marginal_cost--5e-324",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.marginal_cost--5e-324]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: StorageUnit.marginal_cost-10000000000000.002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[StorageUnit.marginal_cost-10000000000000.002]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: options.shed_cost--5e-324",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[options.shed_cost--5e-324]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: options.shed_cost-10000000000000.002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[options.shed_cost-10000000000000.002]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: options.throughput_cost--5e-324",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[options.throughput_cost--5e-324]"
+    },
+    {
+      "weight": 0.000388888888,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"范围或预算不符抛 `ValueError`\"。\n\nThe immediate representable value outside each newly published inclusive\nendpoint is rejected, without requiring any exception message text. Registered scenario: options.throughput_cost-10000000000000.002",
+      "id": "test_outputs.py::test_first_values_outside_public_numeric_intervals_raise_value_error[options.throughput_cost-10000000000000.002]"
+    },
+    {
+      "weight": 0.005833333333,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"全部节点都要满足该条件，停运线不参与\"。\n\nA scalar-valid high common angle next to a stiff line exceeds the a priori\nserialization budget. It is checked at the root or a later topology,\nindependently of whether the physical optimization would be easy. Registered scenario: root",
+      "id": "test_outputs.py::test_public_rounding_budget_checks_every_actual_topology[root]"
+    },
+    {
+      "weight": 0.005833333333,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"全部节点都要满足该条件，停运线不参与\"。\n\nA scalar-valid high common angle next to a stiff line exceeds the a priori\nserialization budget. It is checked at the root or a later topology,\nindependently of whether the physical optimization would be easy. Registered scenario: later",
+      "id": "test_outputs.py::test_public_rounding_budget_checks_every_actual_topology[later]"
+    },
+    {
+      "weight": 0.011666666666,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"Line.x\"；\"[1e-12,1e6] 欧姆\"；\"范围或预算不符抛 `ValueError`\"。\n\nMinimal-subnormal reactance would require a 1 MW angle below the smallest\nrepresentable value. The public interval and independent budget exclude\nit; positive subnormal probability remains a separate legal case.",
+      "id": "test_outputs.py::test_unrepresentable_angle_is_outside_the_numeric_domain"
+    },
+    {
+      "weight": 0.005833333333,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"零容量在运线路的 w 为0，仍属于电气连通图。\"。\n\nRemoving the weak inter-island tie or setting its capacity to zero gives\na valid topology-dependent budget. The zero-demand idle optimum is exact. Registered scenario: outage",
+      "id": "test_outputs.py::test_rounding_budget_respects_outages_and_zero_capacity[outage]"
+    },
+    {
+      "weight": 0.005833333389,
+      "behavior": "numeric_domain",
+      "reason": "题面：\"零容量在运线路的 w 为0，仍属于电气连通图。\"。\n\nRemoving the weak inter-island tie or setting its capacity to zero gives\na valid topology-dependent budget. The zero-demand idle optimum is exact. Registered scenario: zero-capacity",
+      "id": "test_outputs.py::test_rounding_budget_respects_outages_and_zero_capacity[zero-capacity]"
+    },
+    {
+      "weight": 0.004,
+      "behavior": "input_contract",
+      "reason": "题面：结构或支持域错误抛 `ValueError`，不依赖异常消息。 Registered scenario: network",
+      "id": "test_outputs.py::test_malformed_adapter_structure_raises_value_error[network]"
+    },
+    {
+      "weight": 0.004,
+      "behavior": "input_contract",
+      "reason": "题面：结构或支持域错误抛 `ValueError`，不依赖异常消息。 Registered scenario: tree",
+      "id": "test_outputs.py::test_malformed_adapter_structure_raises_value_error[tree]"
+    },
+    {
+      "weight": 0.004,
+      "behavior": "input_contract",
+      "reason": "题面：结构或支持域错误抛 `ValueError`，不依赖异常消息。 Registered scenario: options",
+      "id": "test_outputs.py::test_malformed_adapter_structure_raises_value_error[options]"
+    },
+    {
+      "weight": 0.004,
+      "behavior": "input_contract",
+      "reason": "题面：结构或支持域错误抛 `ValueError`，不依赖异常消息。 Registered scenario: collection",
+      "id": "test_outputs.py::test_malformed_adapter_structure_raises_value_error[collection]"
+    },
+    {
+      "weight": 0.004,
+      "behavior": "input_contract",
+      "reason": "题面：结构或支持域错误抛 `ValueError`，不依赖异常消息。 Registered scenario: parent",
+      "id": "test_outputs.py::test_malformed_adapter_structure_raises_value_error[parent]"
+    },
+    {
+      "weight": 0.005,
+      "behavior": "input_contract",
+      "reason": "题面：\"结构或支持域错误抛 `ValueError`\"。\n\nInvalid conditional probability, parent, depth or unsupported native attributes are rejected without constraining the exception message. Registered scenario: probability",
+      "id": "test_outputs.py::test_invalid_contract_inputs_raise_value_error[probability]"
+    },
+    {
+      "weight": 0.005,
+      "behavior": "input_contract",
+      "reason": "题面：\"结构或支持域错误抛 `ValueError`\"。\n\nInvalid conditional probability, parent, depth or unsupported native attributes are rejected without constraining the exception message. Registered scenario: missing-parent",
+      "id": "test_outputs.py::test_invalid_contract_inputs_raise_value_error[missing-parent]"
+    },
+    {
+      "weight": 0.005,
+      "behavior": "input_contract",
+      "reason": "题面：\"结构或支持域错误抛 `ValueError`\"。\n\nInvalid conditional probability, parent, depth or unsupported native attributes are rejected without constraining the exception message. Registered scenario: unequal-depth",
+      "id": "test_outputs.py::test_invalid_contract_inputs_raise_value_error[unequal-depth]"
+    },
+    {
+      "weight": 0.005,
+      "behavior": "input_contract",
+      "reason": "题面：\"结构或支持域错误抛 `ValueError`\"。\n\nInvalid conditional probability, parent, depth or unsupported native attributes are rejected without constraining the exception message. Registered scenario: unknown-attribute",
+      "id": "test_outputs.py::test_invalid_contract_inputs_raise_value_error[unknown-attribute]"
+    }
+  ],
+  "require_policy_result": true
+}

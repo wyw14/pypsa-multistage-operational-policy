@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 mkdir -p /logs/verifier
-# Failure-safe initialization; only complete authenticated results can grant 1.
+# Failure-safe initialization; complete authenticated results receive behavior-weighted credit.
 /usr/local/bin/python -I /tests/grade.py initialize
 workspace="$(mktemp -d /tmp/trusted-verifier-XXXXXXXX)"
 chmod 700 "$workspace"

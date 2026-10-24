@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from runtime_observations import snapshot
 
 
 class Ledger:
@@ -38,6 +39,8 @@ class Ledger:
                     "outcomes": self.outcomes,
                     "collection_errors": self.collection_errors,
                     "exitstatus": int(exitstatus),
+                    "session_complete": True,
+                    **snapshot(),
                 },
                 indent=2,
             ),

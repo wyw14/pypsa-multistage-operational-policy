@@ -13,6 +13,7 @@ from candidate_proxy import candidate
 from independent import exhaustive_optimum
 from numeric_domain import independent_angle_budgets
 from fractions import Fraction
+from runtime_observations import observe_policy, observe_infeasible
 
 
 def run_candidate(case):
@@ -147,8 +148,10 @@ def test_malformed_adapter_structure_raises_value_error(malformed):
 
 
 def validate(case, result, optimum=None):
+    observe_policy(case, result)
     if optimum is not None and not math.isfinite(optimum):
         assert result == {"status": "infeasible"}
+        observe_infeasible(optimum, result)
         return
     assert result["status"] == "optimal"
     tables = {
@@ -383,6 +386,7 @@ def checked(case):
     answer = run_candidate(case)
     if math.isfinite(optimum):
         validate(case, answer)
+    observe_infeasible(optimum, answer)
     return answer, optimum
 
 

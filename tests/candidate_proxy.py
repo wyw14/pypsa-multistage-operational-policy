@@ -13,6 +13,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 from wire_codec import pack, unpack
+from runtime_observations import record_fault
 
 MAX_WIRE = 16 * 1024 * 1024
 HERE = Path(__file__).resolve().parent
@@ -139,6 +140,7 @@ class Candidate:
         while b"\n" not in self.pending:
             wait = deadline - time.monotonic()
             if wait <= 0 or not select.select([self.process.stdout], [], [], wait)[0]:
+                record_fault("timeout", "rpc_deadline")
                 self.close()
                 raise TimeoutError("Candidate deadline exceeded")
             block = os.read(self.process.stdout.fileno(), 65536)
@@ -149,21 +151,25 @@ class Candidate:
                     with error_path.open("rb") as error_log:
                         error_log.seek(max(0, error_path.stat().st_size - 3000))
                         error_tail = error_log.read().decode("utf-8", errors="replace")
+                record_fault("crash", "rpc_eof")
                 self.close()
                 raise RemoteCandidateError(
                     "Candidate exited without a complete RPC result: " + error_tail
                 )
             self.pending += block
             if len(self.pending) > MAX_WIRE:
+                record_fault("protocol", "rpc_output_limit")
                 self.close()
                 raise RemoteCandidateError("Candidate output exceeds RPC limit")
         line, self.pending = self.pending.split(b"\n", 1)
         try:
             value = json.loads(line)
         except Exception as exc:
+            record_fault("protocol", "rpc_json")
             self.close()
             raise RemoteCandidateError("Invalid candidate protocol") from exc
         if not isinstance(value, dict):
+            record_fault("protocol", "rpc_json")
             self.close()
             raise RemoteCandidateError("Invalid candidate protocol")
         return value
@@ -175,18 +181,23 @@ class Candidate:
             self.close()
         # Debug output is bounded by RLIMIT_FSIZE, separate from RPC/report data.
         self.stderr = open(self.folder / "stderr.log", "wb")
-        self.process = subprocess.Popen(
-            self._command("rpc"),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=self.stderr,
-            env=self._env(),
-            cwd="/",
-            start_new_session=True,
-        )
+        try:
+            self.process = subprocess.Popen(
+                self._command("rpc"),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=self.stderr,
+                env=self._env(),
+                cwd="/",
+                start_new_session=True,
+            )
+        except OSError:
+            record_fault("bootstrap", "rpc_spawn")
+            raise
         self._track(self.process)
         ready = self._read(deadline)
         if ready.get("ready") is not True or type(ready.get("landlock_abi")) is not int:
+            record_fault("bootstrap", "sandbox_handshake")
             self.close()
             raise RemoteCandidateError("Candidate sandbox did not initialize")
         self.abi = ready["landlock_abi"]
@@ -230,6 +241,7 @@ class Candidate:
             )
             self.process.stdin.flush()
         except (BrokenPipeError, OSError) as exc:
+            record_fault("crash", "rpc_broken_pipe")
             self.close()
             raise RemoteCandidateError(
                 "Candidate exited before accepting an RPC request"
@@ -245,16 +257,19 @@ class Candidate:
             changed = canonical(answer.get("args_after")) != canonical(before["args"])
             changed |= canonical(answer.get("kwargs_after")) != canonical(before["kwargs"])
         except Exception as exc:
+            record_fault("protocol", "argument_echo")
             raise RemoteCandidateError("Invalid candidate argument echo") from exc
         if changed:
             raise AssertionError("Candidate modified its input arguments")
         if answer.get("ok") is False:
             raise exception_from_response(answer)
         if answer.get("ok") is not True:
+            record_fault("protocol", "rpc_response")
             raise RemoteCandidateError("Invalid candidate response")
         try:
             return unpack(answer["value"])
         except Exception as exc:
+            record_fault("protocol", "return_encoding")
             raise RemoteCandidateError("Invalid candidate return-value encoding") from exc
 
     def run(self, payload, timeout=90):
@@ -305,19 +320,24 @@ def run_cli(input, timeout=20):
         open(fresh.folder / "cli.out", "w+b") as out,
         open(fresh.folder / "cli.err", "w+b") as err,
     ):
-        process = subprocess.Popen(
-            fresh._command("cli"),
-            stdin=subprocess.PIPE,
-            stdout=out,
-            stderr=err,
-            env=fresh._env(),
-            cwd="/",
-            start_new_session=True,
-        )
+        try:
+            process = subprocess.Popen(
+                fresh._command("cli"),
+                stdin=subprocess.PIPE,
+                stdout=out,
+                stderr=err,
+                env=fresh._env(),
+                cwd="/",
+                start_new_session=True,
+            )
+        except OSError:
+            record_fault("bootstrap", "cli_spawn")
+            raise
         fresh._track(process)
         try:
             process.communicate(input.encode("utf-8"), timeout=timeout)
         except subprocess.TimeoutExpired as exc:
+            record_fault("timeout", "cli_deadline")
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
             raise TimeoutError("Candidate CLI deadline exceeded") from exc
@@ -325,7 +345,10 @@ def run_cli(input, timeout=20):
         err.seek(0)
         stdout, stderr = out.read(MAX_WIRE + 1), err.read(MAX_WIRE + 1)
         if len(stdout) > MAX_WIRE or len(stderr) > MAX_WIRE:
+            record_fault("protocol", "cli_output_limit")
             raise RemoteCandidateError("Candidate CLI output exceeds limit")
+        if process.returncode < 0:
+            record_fault("crash", "cli_signal")
         return SimpleNamespace(
             returncode=process.returncode,
             stdout=stdout.decode("utf-8"),
