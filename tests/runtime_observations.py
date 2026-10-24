@@ -87,12 +87,6 @@ def observe_policy(case, result):
             return
         if not _finite(row["local_cost"]) or not _finite(row["risk_to_go"]):
             return
-        if any(
-            value not in (0, 1)
-            for key in ("u", "start", "stop")
-            for value in row[key].values()
-        ):
-            return
     leaves = nodeids - {node["parent"] for node in tree}
     carry = result["leaf_carry_state"]
     if type(carry) is not dict or set(carry) != leaves:
@@ -112,12 +106,6 @@ def observe_policy(case, result):
                 type(state) is not dict
                 or not required_state.issubset(state)
                 or not all(_finite(state[key]) for key in required_state)
-            ):
-                return
-            if (
-                state["status"] not in (0, 1)
-                or state["hours"] < 1
-                or state["remaining"] < 0
             ):
                 return
     _POLICY_RESULTS += 1
