@@ -133,9 +133,8 @@ def branched(storage=False):
     return case
 
 
-@pytest.mark.parametrize("malformed", ["network", "tree", "options", "collection", "parent"])
-def test_malformed_adapter_structure_raises_value_error(malformed):
-    """题面：结构或支持域错误抛 `ValueError`，不依赖异常消息。"""
+def malformed_adapter_case(malformed):
+    """Build the selected invalid adapter input without evaluating the candidate."""
     case = branched()
     if malformed == "collection":
         case["network"]["loads"] = None
@@ -143,6 +142,13 @@ def test_malformed_adapter_structure_raises_value_error(malformed):
         case["tree"][1]["parent"] = ["root"]
     else:
         del case[malformed]
+    return case
+
+
+@pytest.mark.parametrize("malformed", ["network", "tree", "options", "collection", "parent"])
+def test_malformed_adapter_structure_raises_value_error(malformed):
+    """题面：结构或支持域错误抛 `ValueError`，不依赖异常消息。"""
+    case = malformed_adapter_case(malformed)
     with pytest.raises(ValueError):
         run_candidate(case)
 
